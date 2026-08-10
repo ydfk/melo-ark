@@ -1,0 +1,12 @@
+.DS_Store
+.env
+data/
+target/
+apps/server/target/
+apps/server/config/config.local.yaml
+apps/web/dist/
+apps/web/node_modules/
+.pnpm-store/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

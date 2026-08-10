@@ -1,0 +1,13 @@
+services:
+  meloark:
+    image: ghcr.io/OWNER/melo-ark:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "31000:31000"
+    environment:
+      MELOARK__JWT__SECRET: "replace-with-at-least-32-random-characters"
+    volumes:
+      - ./data:/data
+      - /mnt/nas/music:/music/source:ro
+      - /mnt/nas/music-organized:/music/organized:rw

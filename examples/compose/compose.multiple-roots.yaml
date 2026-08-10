@@ -1,0 +1,17 @@
+services:
+  meloark:
+    image: ghcr.io/OWNER/melo-ark:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "31000:31000"
+    environment:
+      MELOARK__JWT__SECRET: "replace-with-at-least-32-random-characters"
+      MELOARK__PLAYBACK__CACHE_MAX_BYTES: "21474836480"
+    volumes:
+      - ./data:/data
+      - /mnt/nas/music-main:/music/main:rw
+      - /mnt/nas/music-classical:/music/classical:ro
+      - /mnt/nas/music-organized:/music/organized:rw
+
+# 启动后在 Web 中分别添加 /music/main、/music/classical 和 /music/organized。

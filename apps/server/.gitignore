@@ -1,0 +1,5 @@
+/target/
+/data/
+config/config.local.yaml
+.DS_Store
+.worktrees/

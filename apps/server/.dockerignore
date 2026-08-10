@@ -1,0 +1,5 @@
+.git
+.worktrees
+target
+data
+config/config.local.yaml

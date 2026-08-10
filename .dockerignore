@@ -1,0 +1,8 @@
+.git
+.DS_Store
+.env
+data
+**/node_modules
+**/dist
+**/target
+**/*.sqlite*

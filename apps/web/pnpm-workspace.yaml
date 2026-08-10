@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: false
+minimumReleaseAgeExclude:
+  - react-router-dom@7.18.2
+  - react-router@7.18.2
+  - jsdom@30.0.1

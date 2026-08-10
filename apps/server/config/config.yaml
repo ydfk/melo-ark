@@ -1,0 +1,37 @@
+app:
+  host: "0.0.0.0"
+  port: 31000
+  environment: "development"
+  web_dist: "../web/dist"
+jwt:
+  secret: "replace-this-secret-before-production"
+  expiration: 604800
+database:
+  path: "data/db.sqlite"
+logging:
+  filter: "meloark_server=info,tower_http=info"
+scan:
+  io_workers: 2
+  reconcile_interval_sec: 21600
+  watch_debounce_sec: 5
+providers:
+  user_agent: "MeloArk/0.1.0 (https://github.com/ydfk/melo-ark)"
+  cache_ttl_sec: 86400
+  retry_attempts: 2
+  circuit_breaker_failures: 3
+  circuit_breaker_cooldown_sec: 300
+analysis:
+  workers: 1
+  fpcalc_path: "fpcalc"
+  fingerprint_threshold: 0.88
+ai:
+  enabled: false
+  base_url: "https://api.openai.com"
+  api_key: ""
+  model: ""
+  timeout_sec: 30
+playback:
+  ffmpeg_path: "ffmpeg"
+  transcode_workers: 2
+  cache_dir: "/data/cache/transcode"
+  cache_max_bytes: 10737418240

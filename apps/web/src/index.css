@@ -1,0 +1,264 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  :root {
+    font-family: "Avenir Next", "Segoe UI Variable", "PingFang SC", sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    --surface-glow:
+      radial-gradient(circle at top left, oklch(0.93 0.028 252 / 0.9), transparent 24%),
+      radial-gradient(circle at top right, oklch(0.95 0.022 202 / 0.75), transparent 22%);
+  }
+}
+
+:root {
+  --radius: 0.875rem;
+  --background: oklch(0.986 0.004 255.7);
+  --foreground: oklch(0.276 0.026 257.6);
+  --card: oklch(0.998 0.001 255.7);
+  --card-foreground: oklch(0.276 0.026 257.6);
+  --popover: oklch(0.998 0.001 255.7);
+  --popover-foreground: oklch(0.276 0.026 257.6);
+  --primary: oklch(0.574 0.15 260.2);
+  --primary-foreground: oklch(0.99 0.004 255.7);
+  --secondary: oklch(0.958 0.007 255.5);
+  --secondary-foreground: oklch(0.325 0.028 257.1);
+  --muted: oklch(0.964 0.006 255.5);
+  --muted-foreground: oklch(0.534 0.023 257.2);
+  --accent: oklch(0.958 0.011 260.4);
+  --accent-foreground: oklch(0.325 0.028 257.1);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.905 0.012 257.1);
+  --input: oklch(0.905 0.012 257.1);
+  --ring: oklch(0.67 0.109 259.3);
+  --chart-1: oklch(0.635 0.162 257.4);
+  --chart-2: oklch(0.692 0.153 187.4);
+  --chart-3: oklch(0.721 0.176 81.1);
+  --chart-4: oklch(0.667 0.186 20.5);
+  --chart-5: oklch(0.602 0.19 328.2);
+  --sidebar: oklch(0.992 0.003 255.5);
+  --sidebar-foreground: oklch(0.276 0.026 257.6);
+  --sidebar-primary: oklch(0.574 0.15 260.2);
+  --sidebar-primary-foreground: oklch(0.99 0.004 255.7);
+  --sidebar-accent: oklch(0.958 0.011 260.4);
+  --sidebar-accent-foreground: oklch(0.325 0.028 257.1);
+  --sidebar-border: oklch(0.905 0.012 257.1);
+  --sidebar-ring: oklch(0.67 0.109 259.3);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
+}
+
+.dark {
+  --background: oklch(0.135 0.022 270);
+  --foreground: oklch(0.965 0.008 255.5);
+  --card: oklch(0.19 0.027 268);
+  --card-foreground: oklch(0.958 0.01 255.5);
+  --popover: oklch(0.19 0.027 268);
+  --popover-foreground: oklch(0.958 0.01 255.5);
+  --primary: oklch(0.72 0.17 265);
+  --primary-foreground: oklch(0.985 0.006 255.5);
+  --secondary: oklch(0.245 0.035 268);
+  --secondary-foreground: oklch(0.958 0.01 255.5);
+  --muted: oklch(0.235 0.026 268);
+  --muted-foreground: oklch(0.748 0.018 257.2);
+  --accent: oklch(0.285 0.045 268);
+  --accent-foreground: oklch(0.958 0.01 255.5);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.78 0.045 270 / 16%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.72 0.17 265);
+  --chart-1: oklch(0.739 0.144 259.5);
+  --chart-2: oklch(0.76 0.128 186.8);
+  --chart-3: oklch(0.781 0.152 83.1);
+  --chart-4: oklch(0.714 0.158 23.1);
+  --chart-5: oklch(0.712 0.168 326.4);
+  --sidebar: oklch(0.16 0.025 269);
+  --sidebar-foreground: oklch(0.958 0.01 255.5);
+  --sidebar-primary: oklch(0.768 0.132 259.5);
+  --sidebar-primary-foreground: oklch(0.212 0.02 261.2);
+  --sidebar-accent: oklch(0.31 0.023 261.4);
+  --sidebar-accent-foreground: oklch(0.958 0.01 255.5);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.712 0.108 259.4);
+  --surface-glow:
+    radial-gradient(circle at 12% -5%, oklch(0.42 0.13 276 / 0.34), transparent 28%),
+    radial-gradient(circle at 92% 3%, oklch(0.46 0.1 220 / 0.2), transparent 25%);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply min-h-screen bg-background text-foreground;
+    background-image: var(--surface-glow);
+    background-attachment: fixed;
+  }
+  #root {
+    min-height: 100vh;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 26%, white);
+    color: var(--foreground);
+  }
+  .font-mono {
+    font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+  }
+  .font-display {
+    font-family: "Avenir Next", "Segoe UI Variable Display", "PingFang SC", sans-serif;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.text-gradient {
+  background: linear-gradient(
+    100deg,
+    oklch(0.78 0.15 255),
+    oklch(0.74 0.18 292),
+    oklch(0.82 0.12 206)
+  );
+  background-clip: text;
+  color: transparent;
+}
+
+.ark-orbit {
+  position: absolute;
+  top: 50%;
+  left: 18%;
+  width: min(72vw, 760px);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in oklab, var(--primary) 18%, transparent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    0 0 0 64px color-mix(in oklab, var(--primary) 4%, transparent),
+    0 0 0 128px color-mix(in oklab, var(--primary) 2%, transparent);
+  pointer-events: none;
+}
+
+.hero-deck {
+  background:
+    linear-gradient(
+      125deg,
+      color-mix(in oklab, var(--card) 92%, transparent),
+      color-mix(in oklab, var(--primary) 11%, var(--card))
+    ),
+    var(--card);
+}
+
+.record-groove {
+  position: absolute;
+  top: 50%;
+  right: -7rem;
+  width: min(34rem, 62vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: repeating-radial-gradient(
+    circle,
+    color-mix(in oklab, var(--primary) 20%, transparent) 0 1px,
+    transparent 1px 12px
+  );
+  mask-image: linear-gradient(to left, black 15%, transparent 85%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@theme inline {
+  --animate-rainbow: rainbow var(--speed, 2s) infinite linear;
+  --color-color-5: var(--color-5);
+  --color-color-4: var(--color-4);
+  --color-color-3: var(--color-3);
+  --color-color-2: var(--color-2);
+  --color-color-1: var(--color-1);
+  @keyframes rainbow {
+    0% {
+      background-position: 0%;
+    }
+    100% {
+      background-position: 200%;
+    }
+  }
+}

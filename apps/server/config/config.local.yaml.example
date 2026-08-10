@@ -1,0 +1,8 @@
+app:
+  port: 31000
+
+jwt:
+  secret: "replace-with-your-local-secret"
+
+database:
+  path: "data/db.local.sqlite"

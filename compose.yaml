@@ -1,0 +1,24 @@
+services:
+  meloark:
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    image: "${MELOARK_IMAGE:-meloark:local}"
+    platform: linux/amd64
+    container_name: meloark
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${MELOARK_PORT:-31000}:31000"
+    environment:
+      MELOARK__JWT__SECRET: "${MELOARK_JWT_SECRET:-local-only-change-this-secret-32chars}"
+    volumes:
+      - ./data:/data
+      - "${MELOARK_SOURCE_PATH:-./fixtures/audio}:/music/source:rw"
+      - "${MELOARK_MANAGED_PATH:-./data/organized}:/music/organized:rw"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
