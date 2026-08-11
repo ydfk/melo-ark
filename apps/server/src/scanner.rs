@@ -6,7 +6,7 @@ mod storage;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, mpsc};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -70,24 +70,9 @@ pub fn spawn_job(state: AppState, job_id: Uuid) {
 }
 
 async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
-    let _permit = state
-        .scan_semaphore
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(AppError::internal)?;
-    let claimed = sqlx::query(
-        "UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('queued', 'interrupted')",
-    )
-    .bind(Utc::now())
-    .bind(Utc::now())
-    .bind(job_id)
-    .execute(&state.pool)
-    .await
-    .map_err(AppError::internal)?;
-    if claimed.rows_affected() == 0 {
+    let Some(_permit) = acquire_scan_slot(&state, job_id).await? else {
         return Ok(());
-    }
+    };
 
     let job = jobs::fetch_job(&state.pool, job_id).await?;
     let library_id = job
@@ -114,6 +99,58 @@ async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
 
     reconcile_removed_files(&state, job_id, library_id).await?;
     finish_scan(&state, job_id, library_id).await
+}
+
+async fn acquire_scan_slot(
+    state: &AppState,
+    job_id: Uuid,
+) -> Result<Option<OwnedSemaphorePermit>, AppError> {
+    loop {
+        let permit = state
+            .scan_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(AppError::internal)?;
+        let now = Utc::now();
+        let claimed = sqlx::query(
+            r#"UPDATE jobs
+               SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
+               WHERE id = ? AND status IN ('queued', 'interrupted')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM jobs AS active
+                   WHERE active.kind = 'scan'
+                     AND active.library_id = (SELECT library_id FROM jobs WHERE id = ?)
+                     AND active.id != ?
+                     AND active.status IN ('running', 'paused', 'cancel_requested')
+                 )"#,
+        )
+        .bind(now)
+        .bind(now)
+        .bind(job_id)
+        .bind(job_id)
+        .bind(job_id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+        if claimed.rows_affected() == 1 {
+            return Ok(Some(permit));
+        }
+        drop(permit);
+
+        let job = jobs::fetch_job(&state.pool, job_id).await?;
+        match job.status.as_str() {
+            "queued" | "interrupted" => {
+                // 同一曲库已有扫描时保留后续任务，避免文件变更后的重扫请求被吞掉。
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            "cancel_requested" => {
+                finish_cancelled(state, job_id).await?;
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 fn enumerate_files(

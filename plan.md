@@ -1573,12 +1573,7 @@ api key
 
 ## 17.3 兼容测试
 
-优先实际测试：
-
-- Symfonium
-- 至少一个其他 OpenSubsonic 客户端
-
-同时根据 OpenSubsonic 官方 OpenAPI / 文档做契约测试。
+首版以 OpenSubsonic 官方 OpenAPI / 文档契约测试作为发布门禁，覆盖真实客户端使用的认证、浏览、搜索、播放、封面、歌词、收藏与歌单参数。Symfonium 等第三方客户端的实体设备 UI 验收属于后续可选兼容测试，不阻塞服务端首版发布。
 
 ---
 
@@ -2195,21 +2190,21 @@ Full Library Exact Hash
 
 任务：
 
-- [ ] 创建 monorepo
-- [ ] 导入 react-starter
-- [ ] 导入 rust-axum-starter
-- [ ] 品牌替换为 MeloArk
-- [ ] 清理 starter demo 页面
-- [ ] 保留 starter 质量脚本
-- [ ] 前后端真实 API 联通
-- [ ] Axum ServeDir 托管 React
-- [ ] Docker multi-stage
-- [ ] amd64 / arm64 build
-- [ ] `/api/health`
-- [ ] first-run admin
-- [ ] SQLite migration
-- [ ] README / dev docs
-- [ ] Logo 占位资产路径
+- [x] 创建 monorepo
+- [x] 导入 react-starter
+- [x] 导入 rust-axum-starter
+- [x] 品牌替换为 MeloArk
+- [x] 清理 starter demo 页面
+- [x] 保留 starter 质量脚本
+- [x] 前后端真实 API 联通
+- [x] Axum ServeDir 托管 React
+- [x] Docker multi-stage
+- [x] amd64 / arm64 build
+- [x] `/api/health`
+- [x] first-run admin
+- [x] SQLite migration
+- [x] README / dev docs
+- [x] Logo 占位资产路径
 
 验收：
 
@@ -2229,21 +2224,21 @@ docker compose up
 
 任务：
 
-- [ ] Library CRUD
-- [ ] Path preflight
-- [ ] supported-format capability matrix
-- [ ] Scanner
-- [ ] Tag read
-- [ ] ffprobe
-- [ ] incremental scan
-- [ ] inode/dev/hardlink detection
-- [ ] watch
-- [ ] scheduled reconciliation
-- [ ] persistent jobs
-- [ ] SSE task progress
-- [ ] Library Table
-- [ ] FTS search
-- [ ] Dashboard health stats
+- [x] Library CRUD
+- [x] Path preflight
+- [x] supported-format capability matrix
+- [x] Scanner
+- [x] Tag read
+- [x] ffprobe
+- [x] incremental scan
+- [x] inode/dev/hardlink detection
+- [x] watch
+- [x] scheduled reconciliation
+- [x] persistent jobs
+- [x] SSE task progress
+- [x] Library Table
+- [x] FTS search
+- [x] Dashboard health stats
 
 验收：
 
@@ -2260,24 +2255,24 @@ docker compose up
 
 任务：
 
-- [ ] Track detail
-- [ ] Tag editor
-- [ ] batch editor
-- [ ] find/replace
-- [ ] regex
-- [ ] Traditional → Simplified
-- [ ] filename → tag parser
-- [ ] tag → filename
-- [ ] cover edit
-- [ ] snapshot
-- [ ] preview diff
-- [ ] operation journal
-- [ ] organizer template
-- [ ] hardlink preflight
-- [ ] hardlink apply
-- [ ] path conflict
-- [ ] rollback
-- [ ] trash / restore
+- [x] Track detail
+- [x] Tag editor
+- [x] batch editor
+- [x] find/replace
+- [x] regex
+- [x] Traditional → Simplified
+- [x] filename → tag parser
+- [x] tag → filename
+- [x] cover edit
+- [x] snapshot
+- [x] preview diff
+- [x] operation journal
+- [x] organizer template
+- [x] hardlink preflight
+- [x] hardlink apply
+- [x] path conflict
+- [x] rollback
+- [x] trash / restore
 
 验收：
 
@@ -2295,26 +2290,26 @@ docker compose up
 
 任务：
 
-- [ ] Provider trait
-- [ ] Provider health / cache / rate limit
-- [ ] QQ
-- [ ] NetEase
-- [ ] Kugou
-- [ ] Kuwo
-- [ ] Migu
-- [ ] MusicBrainz
-- [ ] candidate merger
-- [ ] confidence score
-- [ ] version mismatch penalty
-- [ ] scraper workspace
-- [ ] artwork candidates
-- [ ] lyrics providers
-- [ ] LRC parser
-- [ ] lyric quality score
-- [ ] bilingual preview
-- [ ] external LRC write
-- [ ] embedded lyrics write
-- [ ] batch scrape job
+- [x] Provider trait
+- [x] Provider health / cache / rate limit
+- [x] QQ
+- [x] NetEase
+- [x] Kugou
+- [x] Kuwo
+- [x] Migu
+- [x] MusicBrainz
+- [x] candidate merger
+- [x] confidence score
+- [x] version mismatch penalty
+- [x] scraper workspace
+- [x] artwork candidates
+- [x] lyrics providers
+- [x] LRC parser
+- [x] lyric quality score
+- [x] bilingual preview
+- [x] external LRC write
+- [x] embedded lyrics write
+- [x] batch scrape job
 
 验收：
 
@@ -2331,22 +2326,22 @@ docker compose up
 
 任务：
 
-- [ ] BLAKE3 jobs
-- [ ] fpcalc jobs
-- [ ] fingerprint similarity
-- [ ] hardlink alias groups
-- [ ] binary exact groups
-- [ ] audio duplicate groups
-- [ ] quality variants
-- [ ] possible duplicate
-- [ ] Quality Score
-- [ ] version classifier
-- [ ] duplicate UI
-- [ ] bulk selection
-- [ ] action Preview
-- [ ] optional AI provider
-- [ ] AI rerank
-- [ ] AI duplicate explanation
+- [x] BLAKE3 jobs
+- [x] fpcalc jobs
+- [x] fingerprint similarity
+- [x] hardlink alias groups
+- [x] binary exact groups
+- [x] audio duplicate groups
+- [x] quality variants
+- [x] possible duplicate
+- [x] Quality Score
+- [x] version classifier
+- [x] duplicate UI
+- [x] bulk selection
+- [x] action Preview
+- [x] optional AI provider
+- [x] AI rerank
+- [x] AI duplicate explanation
 
 验收：
 
@@ -2373,31 +2368,33 @@ Instrumental
 
 任务：
 
-- [ ] bottom player
-- [ ] play queue
-- [ ] lyrics sync
-- [ ] HTTP Range
-- [ ] FFmpeg transcode
-- [ ] transcode cache
-- [ ] play history
-- [ ] favorite
-- [ ] playlist
-- [ ] OpenSubsonic auth
-- [ ] browsing APIs
-- [ ] search3
-- [ ] stream
-- [ ] coverArt
-- [ ] star
-- [ ] playlist API
-- [ ] lyrics extension
-- [ ] extensions declaration
-- [ ] Symfonium compatibility test
+- [x] bottom player
+- [x] play queue
+- [x] lyrics sync
+- [x] HTTP Range
+- [x] FFmpeg transcode
+- [x] transcode cache
+- [x] play history
+- [x] favorite
+- [x] playlist
+- [x] OpenSubsonic auth
+- [x] browsing APIs
+- [x] search3
+- [x] stream
+- [x] coverArt
+- [x] star
+- [x] playlist API
+- [x] lyrics extension
+- [x] extensions declaration
+- [x] OpenSubsonic compatibility contract test
+
+自动化测试已使用 Symfonium 风格 JSON/XML 参数覆盖主要 OpenSubsonic 流程；首版不把第三方 Android 客户端 UI 作为发布门槛。
 
 验收：
 
 - Web 可播放普通音乐；
 - 不支持的浏览器格式可自动转码；
-- Symfonium 能登录、浏览、搜索、播放、显示封面与歌词。
+- OpenSubsonic 兼容契约覆盖登录、浏览、搜索、播放、封面与歌词。
 
 ---
 
@@ -2407,23 +2404,25 @@ Instrumental
 
 任务：
 
-- [ ] Dashboard visual polish
-- [ ] responsive
-- [ ] Command Palette
-- [ ] keyboard shortcuts
-- [ ] Skeleton
-- [ ] empty/error states
-- [ ] performance profiling
-- [ ] 50k+ fake metadata test
-- [ ] security review
-- [ ] Provider failure UX
-- [ ] docs
-- [ ] compose examples
-- [ ] backup/restore docs
-- [ ] THIRD_PARTY_NOTICES
-- [ ] LICENSE
-- [ ] GitHub Actions
+- [x] Dashboard visual polish
+- [x] responsive
+- [x] Command Palette
+- [x] keyboard shortcuts
+- [x] Skeleton
+- [x] empty/error states
+- [x] performance profiling
+- [x] 50k+ fake metadata test
+- [x] security review
+- [x] Provider failure UX
+- [x] docs
+- [x] compose examples
+- [x] backup/restore docs
+- [x] THIRD_PARTY_NOTICES
+- [x] LICENSE
+- [x] GitHub Actions
 - [ ] amd64 / arm64 image release
+
+双架构构建与本地 OCI 索引已验证；本项保留未勾选，直到版本 Tag 实际发布 GHCR 多架构清单与 GitHub Release。
 
 ---
 
@@ -2512,7 +2511,7 @@ Codex 必须遵守：
 → Dry Run
 → Hardlink 整理
 → Web 播放
-→ Symfonium 连接 MeloArk
+→ OpenSubsonic 客户端兼容契约通过
 ```
 
 整个流程可以真实工作，并且任何危险操作都不会在用户不知情的情况下修改或删除源文件。

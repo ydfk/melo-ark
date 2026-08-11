@@ -314,6 +314,31 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
         &target
     ));
 
+    let managed_library_id = uuid::Uuid::parse_str(&managed_library).expect("目标曲库 UUID");
+    let initial_target_scan: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM jobs WHERE kind = 'scan' AND library_id = ? ORDER BY rowid DESC LIMIT 1",
+    )
+    .bind(managed_library_id)
+    .fetch_one(&pool)
+    .await
+    .expect("整理后的目标曲库扫描任务");
+    wait_for_job(&context.app, &token, &initial_target_scan.to_string()).await;
+
+    // 固定制造一个正在运行的同曲库扫描，验证撤销触发的后续扫描不会被吞掉。
+    let blocking_scan_id = uuid::Uuid::new_v4();
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "INSERT INTO jobs (id, kind, status, library_id, created_at, started_at, updated_at) VALUES (?, 'scan', 'running', ?, ?, ?, ?)",
+    )
+    .bind(blocking_scan_id)
+    .bind(managed_library_id)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("创建阻塞扫描任务");
+
     let (status, undone) = request(
         &context.app,
         "POST",
@@ -328,24 +353,27 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     assert_eq!(undone["status"], "rolled_back");
     assert!(!target.exists());
     assert!(context.source.join("03 - 晴天.wav").is_file());
-    let (_, jobs) = request(&context.app, "GET", "/api/jobs", None, Some(&token)).await;
-    let rescan_job = jobs
-        .as_array()
-        .and_then(|items| {
-            items.iter().find(|job| {
-                job["kind"] == "scan" && job["libraryId"].as_str() == Some(&managed_library)
-            })
-        })
-        .expect("撤销后目标曲库重扫任务");
-    wait_for_job(
-        &context.app,
-        &token,
-        rescan_job["id"].as_str().expect("撤销后重扫任务 ID"),
+    let rescan_job_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM jobs WHERE kind = 'scan' AND library_id = ? AND status = 'queued' ORDER BY rowid DESC LIMIT 1",
     )
-    .await;
+    .bind(managed_library_id)
+    .fetch_one(&pool)
+    .await
+    .expect("撤销后排队的目标曲库重扫任务");
+    let finished_at = chrono::Utc::now();
+    sqlx::query(
+        "UPDATE jobs SET status = 'completed', finished_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(finished_at)
+    .bind(finished_at)
+    .bind(blocking_scan_id)
+    .execute(&pool)
+    .await
+    .expect("释放阻塞扫描任务");
+    wait_for_job(&context.app, &token, &rescan_job_id.to_string()).await;
     let managed_media_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE library_id = ?")
-            .bind(uuid::Uuid::parse_str(&managed_library).expect("目标曲库 UUID"))
+            .bind(managed_library_id)
             .fetch_one(&pool)
             .await
             .expect("读取撤销后的目标索引");

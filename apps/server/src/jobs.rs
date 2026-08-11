@@ -110,29 +110,40 @@ pub async fn recover_interrupted(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 pub async fn create_scan_job(state: &AppState, library_id: Uuid) -> Result<JobResponse, AppError> {
-    let active: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM jobs WHERE library_id = ? AND kind = 'scan' AND status IN ('queued', 'running', 'paused', 'cancel_requested') LIMIT 1",
-    )
-    .bind(library_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(AppError::internal)?;
-    if let Some(id) = active {
-        return fetch_job(&state.pool, id).await;
-    }
-
     let id = Uuid::new_v4();
     let now = Utc::now();
-    sqlx::query(
-        "INSERT INTO jobs (id, kind, status, library_id, created_at, updated_at) VALUES (?, 'scan', 'queued', ?, ?, ?)",
+    let inserted = sqlx::query(
+        r#"INSERT INTO jobs (id, kind, status, library_id, created_at, updated_at)
+           SELECT ?, 'scan', 'queued', ?, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1 FROM jobs
+             WHERE library_id = ? AND kind = 'scan' AND status = 'queued'
+           )"#,
     )
     .bind(id)
     .bind(library_id)
     .bind(now)
     .bind(now)
+    .bind(library_id)
     .execute(&state.pool)
     .await
     .map_err(AppError::internal)?;
+    if inserted.rows_affected() == 0 {
+        let existing: Uuid = sqlx::query_scalar(
+            r#"SELECT id FROM jobs
+               WHERE library_id = ? AND kind = 'scan'
+                 AND status IN ('queued', 'paused', 'running', 'cancel_requested')
+               ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+                        created_at DESC, rowid DESC
+               LIMIT 1"#,
+        )
+        .bind(library_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+        return fetch_job(&state.pool, existing).await;
+    }
+
     let job = fetch_job(&state.pool, id).await?;
     emit(state, job.clone());
     Ok(job)
@@ -161,7 +172,7 @@ pub async fn list_jobs(pool: &SqlitePool, limit: i64) -> Result<Vec<JobResponse>
         SELECT id, kind, status, library_id, total_items, processed_items, success_items,
                skipped_items, failed_items, current_item, error_message, created_at,
                started_at, finished_at, updated_at
-        FROM jobs ORDER BY created_at DESC LIMIT ?
+        FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?
         "#,
     )
     .bind(limit.clamp(1, 200))

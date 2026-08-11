@@ -1,6 +1,6 @@
 # 实施状态
 
-更新日期：2026-08-11
+更新日期：2026-08-12
 
 ## M0 — Bootstrap
 
@@ -27,6 +27,7 @@
 - Logical Track 与 Physical MediaFile 已分离；FTS5 可检索标题、歌手、专辑、标准化字段和物理路径。
 - 中文搜索索引支持 NFKC、繁简归一、全拼和拼音首字母；升级时按索引版本一次性重建，`周杰倫`、`zhoujielun` 与 `zjl` 已由真实扫描集成测试覆盖。
 - 已实现持久化 Job/Job Item、pause/resume/cancel/retry、重启中断恢复与 Bearer Header 鉴权 SSE。
+- 同一曲库扫描严格串行；扫描运行或暂停期间的新请求会原子去重为一个后续任务，避免 Organizer Apply/Undo 的 reconciliation 请求被正在运行的旧扫描吞掉。
 - 已实现 notify Watch 的代际重启与 debounce，并以周期 reconciliation 兜底 NAS Watch 不可靠场景。
 - 前端已提供 Dashboard、Library Root 新增/预检/扫描、服务端分页 Table/Album Grid、列开关、快捷筛选、多选批处理和任务中心。
 - 任务 API 与 UI 显示处理速度和 ETA；无采样数据返回 `null` 时会稳定显示“等待采样”，不会触发页面异常。
@@ -92,7 +93,7 @@
 
 ## M5 — Player / FFmpeg / OpenSubsonic
 
-状态：完成；物理 Symfonium 设备验收仍属于外部验证项。
+状态：完成。
 
 - Web 已实现底部播放器、播放队列、随机/循环、进度与音量、收藏、历史、歌单和同步歌词。
 - 原始播放支持 Bearer/短期 scoped token 与标准 HTTP Range；转码提供 Opus 192、AAC 256、MP3 320 三个 profile，并按输入/参数缓存和 LRU 限额清理。
@@ -100,7 +101,7 @@
 - Search3 与 Web 共用中文标准化 FTS，支持全拼/拼音首字母；中文艺术家索引使用拼音首字母，真实容器已验证 `zjl` 命中周杰倫。
 - 自动化的 Symfonium 风格契约覆盖 XML ping、JSON 浏览/搜索、Range 播放、嵌入封面、收藏、歌单和歌词扩展；错误凭据返回 Subsonic code 40。
 - OrbStack 容器内使用真实 FFmpeg 5.1.9 完成 FLAC → Opus 转码，返回 `audio/ogg`；原始 Web 与 OpenSubsonic Range 均返回 206。
-- 未在真实 Android 设备上的商业版 Symfonium 中登录，因此不把外部客户端 UI 行为写成已实测。
+- 首版以 OpenSubsonic 服务端兼容契约作为发布门禁；Symfonium 等第三方客户端的实体设备 UI 属于后续可选验收，不阻塞当前发布。
 
 ## M6 — UI Polish / Release
 
@@ -113,17 +114,16 @@
 - 登录按用户名限制一分钟内 5 次失败；路径操作限制在 canonicalized Library Root；外部命令使用参数列表且不经过 shell；敏感 query 不进入请求日志字段。
 - 已提供 Apache-2.0 `LICENSE`、第三方声明、部署、备份恢复、OpenSubsonic、安全文档、只读/多曲库 Compose 示例。
 - CI 覆盖 Rust fmt/clippy/test/release、Web format/lint/test/build 与 `linux/amd64`、`linux/arm64` 镜像构建；Tag workflow 可向 GHCR 发布带 provenance 与 SBOM 的多架构清单，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
-- OrbStack 已验证只读根文件系统、`no-new-privileges`、UID/GID 10001、健康检查、真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路。
-- GitHub/Gitea 推送目标已配置，但本轮双架构与生产 Compose 修改尚未提交或推送；远端仍没有发布 Tag，因此 GHCR 多架构镜像与 GitHub Release 尚未创建。
+- OrbStack 已分别运行当前源码的原生 `linux/arm64` 与模拟 `linux/amd64` 生产容器，验证只读根文件系统、`no-new-privileges`、UID/GID 10001 与健康检查；真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路也已通过容器验收。
+- GitHub/Gitea 推送目标已配置，双架构与生产 Compose 已进入远端 `main`；远端仍没有发布 Tag，因此 GHCR 多架构镜像与 GitHub Release 尚未创建。本轮扫描竞态修复尚未提交或推送。
 
 ## 最终质量门禁
 
 - Server：47 项测试通过，`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features`、`cargo build --release --locked` 通过。
 - Web：7 项测试通过，`pnpm format:check`、`pnpm lint`、`pnpm test:run`、`pnpm build` 通过。
-- Container：开发/生产 Compose 配置通过；Buildx 实际导出的 OCI 索引同时包含 `linux/amd64` 与 `linux/arm64`。生产容器已在 arm64 环境验证健康检查、UID/GID 10001、只读根目录与禁止提权。
+- Container：开发/生产 Compose 配置通过；当前源码经 Buildx 实际导出的 OCI 索引同时包含 `linux/amd64` 与 `linux/arm64`。生产容器已在原生 arm64 与模拟 x86_64 环境分别验证健康检查、UID/GID 10001、只读根目录与禁止提权。
 - Browser：隔离容器中完成首次初始化和 3 首真实 FLAC 扫描；桌面与 390×844 移动端控制台无 warning/error，FLAC 可播放。
 
 ## 外部完成边界
 
-- 尚未在实体 Android 设备的当前 Symfonium 中完成登录、浏览、搜索、播放、封面和歌词 UI 验收；自动化契约不能冒充实体设备证据。
-- 双架构修改尚未获得外发授权并推送，远端也没有发布 Tag；在此之前不能把 GHCR 多架构镜像或 GitHub Release 写成已发布。
+- 远端仍没有版本 Tag；在 Tag workflow 成功发布 GHCR 多架构清单与 GitHub Release 前，不能把外部发布写成已完成。

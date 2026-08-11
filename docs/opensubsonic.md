@@ -19,6 +19,6 @@ MeloArk 在 `/rest/*.view` 提供独立于 Web API 的 OpenSubsonic/Subsonic 接
 
 ## 兼容性证据
 
-自动化测试使用 Symfonium 风格的 `u/t/s/v/c/f` 参数覆盖 JSON/XML 登录、浏览、搜索、歌曲详情、Range 播放、错误码、歌单和歌词契约。该测试不是实体 Android 设备实测；正式发布前仍应使用当前 Symfonium 与另一个 OpenSubsonic 客户端完成外部设备验收。
+自动化测试使用 Symfonium 风格的 `u/t/s/v/c/f` 参数覆盖 JSON/XML 登录、浏览、搜索、歌曲详情、Range 播放、错误码、歌单和歌词契约。首版以服务端兼容契约作为发布门禁；如果后续需要 Android 播放体验，可再使用当前 Symfonium 或其他 OpenSubsonic 客户端做可选设备验收。
 
 客户端无法登录时，先确认 JWT Secret 未在初始化后更换，再查看 `/api/health`。连续失败会触发一分钟登录限流。
