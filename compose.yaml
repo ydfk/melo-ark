@@ -2,10 +2,7 @@ services:
   meloark:
     build:
       context: .
-      platforms:
-        - linux/amd64
     image: "${MELOARK_IMAGE:-meloark:local}"
-    platform: linux/amd64
     container_name: meloark
     restart: unless-stopped
     init: true

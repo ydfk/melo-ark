@@ -1,6 +1,6 @@
 # 实施状态
 
-更新日期：2026-08-10
+更新日期：2026-08-11
 
 ## M0 — Bootstrap
 
@@ -11,7 +11,7 @@
 - 已替换 MeloArk 品牌、首页和占位 Logo。
 - 已实现 `/api/health`、首次管理员状态/初始化、登录、当前用户。
 - 已启用 SQLite WAL、foreign keys、busy timeout 与迁移。
-- 已实现 Axum SPA 静态托管与 `linux/amd64` 单镜像 Dockerfile。
+- 已实现 Axum SPA 静态托管与 `linux/amd64`、`linux/arm64` 双架构单镜像 Dockerfile。
 - 已提供 Compose、本地开发文档与配置环境变量覆盖。
 - 后端 `fmt`、`clippy -D warnings`、`test`、`release build` 已通过。
 - 前端 `format:check`、`lint`、`test:run`、`build` 已通过。
@@ -75,7 +75,7 @@
 - 歌词写入创建持久化 Job；逐项失败可在任务中心重试，集成测试覆盖先因已有 LRC 失败、移除冲突后重试成功。
 - 真实 WAV 集成测试覆盖 80–94 分禁止普通确认、候选 Diff、批量任务持久化、本地 LRC 评分及禁止静默覆盖。
 - 后端 `fmt`、`clippy -D warnings`、测试与 `release build` 已通过；前端 `format`、`lint`、测试和生产构建已通过。
-- Docker、FFmpeg 与 fpcalc 外部二进制已在 M6 的 `linux/amd64` 镜像内统一补验。
+- Docker、FFmpeg 与 fpcalc 外部二进制已在 M6 镜像内统一补验。
 
 ## M4 — Duplicate / Fingerprint / AI
 
@@ -112,18 +112,18 @@
 - 50,001 曲目真实 API 性能测试通过：本轮分页列表约 328 ms、FTS 搜索约 228 ms，均低于 5 秒门禁。
 - 登录按用户名限制一分钟内 5 次失败；路径操作限制在 canonicalized Library Root；外部命令使用参数列表且不经过 shell；敏感 query 不进入请求日志字段。
 - 已提供 Apache-2.0 `LICENSE`、第三方声明、部署、备份恢复、OpenSubsonic、安全文档、只读/多曲库 Compose 示例。
-- CI 覆盖 Rust fmt/clippy/test/release、Web format/lint/test/build 与 `linux/amd64` 镜像构建；Tag workflow 可向 GHCR 发布带 provenance 与 SBOM 的镜像，并创建附带 Compose、环境模板、许可证和第三方声明的 GitHub Release。
+- CI 覆盖 Rust fmt/clippy/test/release、Web format/lint/test/build 与 `linux/amd64`、`linux/arm64` 镜像构建；Tag workflow 可向 GHCR 发布带 provenance 与 SBOM 的多架构清单，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
 - OrbStack 已验证只读根文件系统、`no-new-privileges`、UID/GID 10001、健康检查、真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路。
-- 当前仓库没有 Git remote，且本机 `gh` 的 `ydfk` 登录令牌已失效，因此未创建 tag、推送 GHCR 或创建 GitHub Release；workflow 与本地 release-candidate 镜像是可验证交付物。
+- GitHub/Gitea 推送目标已配置，但本轮双架构与生产 Compose 修改尚未提交或推送；远端仍没有发布 Tag，因此 GHCR 多架构镜像与 GitHub Release 尚未创建。
 
 ## 最终质量门禁
 
 - Server：47 项测试通过，`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features`、`cargo build --release --locked` 通过。
 - Web：7 项测试通过，`pnpm format:check`、`pnpm lint`、`pnpm test:run`、`pnpm build` 通过。
-- Container：`docker compose config --quiet` 与 `docker build --platform linux/amd64` 通过；镜像 218,034,266 bytes，架构 `amd64/linux`，默认用户 `meloark`（10001）。
+- Container：开发/生产 Compose 配置通过；Buildx 实际导出的 OCI 索引同时包含 `linux/amd64` 与 `linux/arm64`。生产容器已在 arm64 环境验证健康检查、UID/GID 10001、只读根目录与禁止提权。
 - Browser：隔离容器中完成首次初始化和 3 首真实 FLAC 扫描；桌面与 390×844 移动端控制台无 warning/error，FLAC 可播放。
 
 ## 外部完成边界
 
 - 尚未在实体 Android 设备的当前 Symfonium 中完成登录、浏览、搜索、播放、封面和歌词 UI 验收；自动化契约不能冒充实体设备证据。
-- 当前仓库没有 Git remote，且 GitHub CLI 需要重新登录，因此无法推送分支/Tag、发布 GHCR 镜像或创建 GitHub Release。代码、CI workflow 与本地 `linux/amd64` 镜像已就绪。
+- 双架构修改尚未获得外发授权并推送，远端也没有发布 Tag；在此之前不能把 GHCR 多架构镜像或 GitHub Release 写成已发布。

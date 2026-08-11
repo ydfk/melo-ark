@@ -1,6 +1,6 @@
 # 架构概览
 
-MeloArk 首版是模块化单体：React 构建产物由 Axum 静态托管，业务数据与持久化任务保存在 `/data/meloark.db`，缓存位于 `/data/cache`。生产环境只交付一个 `linux/amd64` 镜像。
+MeloArk 首版是模块化单体：React 构建产物由 Axum 静态托管，业务数据与持久化任务保存在 `/data/meloark.db`，缓存位于 `/data/cache`。生产环境在同一镜像标签下交付 `linux/amd64` 与 `linux/arm64`。
 
 核心领域始终分离 Logical Track 与 Physical MediaFile。同一首逻辑歌曲可关联多个编码、采样率或发行版本的物理文件，避免把质量变体误判为应删除的重复项。
 

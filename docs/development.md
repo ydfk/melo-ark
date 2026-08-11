@@ -39,5 +39,9 @@ pnpm build
 生产交付还需在仓库根目录执行：
 
 ```bash
-docker build --platform linux/amd64 -t meloark:local .
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --output type=oci,dest=/tmp/meloark-multiarch.tar .
 ```
+
+单架构本地运行使用 `--platform linux/arm64 --load`（Apple Silicon）或 `--platform linux/amd64 --load`（Intel/AMD 与 Windows Docker Desktop）。发布多架构标签时使用 `--push`，详见部署文档。

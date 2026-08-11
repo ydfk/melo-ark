@@ -8,17 +8,18 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web/ ./
 RUN pnpm build
 
-FROM --platform=linux/amd64 rust:1.97.1-bookworm AS server-builder
+FROM --platform=$TARGETPLATFORM rust:1.97.1-bookworm AS server-builder
+ARG TARGETARCH
 WORKDIR /build/apps/server
 COPY apps/server/Cargo.toml apps/server/Cargo.lock ./
 COPY apps/server/migrations ./migrations
 COPY apps/server/src ./src
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/apps/server/target \
+RUN --mount=type=cache,id=meloark-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=meloark-server-target-${TARGETARCH},target=/build/apps/server/target \
     cargo build --release --locked \
     && cp target/release/meloark-server /tmp/meloark-server
 
-FROM --platform=linux/amd64 debian:bookworm-slim AS runtime
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl ffmpeg libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/* \

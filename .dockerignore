@@ -1,6 +1,7 @@
 .git
 .DS_Store
 .env
+.env.production
 data
 **/node_modules
 **/dist

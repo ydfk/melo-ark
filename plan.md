@@ -3,7 +3,7 @@
 > 版本：v0.1 Draft
 > 日期：2026-08-09
 > 定位：面向 NAS / HomeLab / 本地音乐收藏的自托管 Web 音乐管理、整理与播放服务。
-> 首版平台：Linux `amd64`，单 Docker 镜像，SQLite。
+> 首版平台：Linux `amd64` / `arm64`，单 Docker 镜像，SQLite。
 
 ---
 
@@ -54,7 +54,7 @@
 - 主要管理本地/NAS音乐，不提供在线音乐下载。
 - 当前曲库规模约 `3TB`。
 - 支持多个音乐根目录。
-- 首版只要求 Linux `amd64`。
+- 首版同时支持 Linux `amd64` 与 `arm64`。
 - 单用户管理员模式。
 - 数据库仅支持 SQLite。
 - 单 Docker 镜像交付。
@@ -219,13 +219,12 @@ React 静态文件由 Axum 直接托管。
 
 SPA 路由需要 fallback 到 `index.html`。
 
-首版只构建：
+首版构建同一镜像标签下的两个平台：
 
 ```text
 linux/amd64
+linux/arm64
 ```
-
-后续再增加 arm64。
 
 ## 4.2 挂载模型
 
@@ -2205,7 +2204,7 @@ Full Library Exact Hash
 - [ ] 前后端真实 API 联通
 - [ ] Axum ServeDir 托管 React
 - [ ] Docker multi-stage
-- [ ] amd64 build
+- [ ] amd64 / arm64 build
 - [ ] `/api/health`
 - [ ] first-run admin
 - [ ] SQLite migration
@@ -2424,7 +2423,7 @@ Instrumental
 - [ ] THIRD_PARTY_NOTICES
 - [ ] LICENSE
 - [ ] GitHub Actions
-- [ ] amd64 image release
+- [ ] amd64 / arm64 image release
 
 ---
 
@@ -2436,7 +2435,6 @@ Instrumental
 - 在线音乐在线播放源
 - 多用户 RBAC
 - PostgreSQL
-- ARM64
 - 原生 iOS / Android
 - 桌面客户端
 - DLNA
@@ -2452,7 +2450,6 @@ Instrumental
 
 # 29. 后续可扩展
 
-- arm64
 - 多用户
 - ReplayGain
 - BPM / Key

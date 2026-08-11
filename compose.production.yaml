@@ -1,0 +1,18 @@
+services:
+  meloark:
+    image: "${MELOARK_IMAGE:-ghcr.io/ydfk/melo-ark:0.1.0}"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${MELOARK_BIND_ADDRESS:-0.0.0.0}:${MELOARK_PORT:-31000}:31000"
+    environment:
+      MELOARK__JWT__SECRET: "${MELOARK_JWT_SECRET:?Set a random MELOARK_JWT_SECRET of at least 32 characters}"
+    volumes:
+      - "${MELOARK_DATA_PATH:-./data}:/data"
+      - "${MELOARK_SOURCE_PATH:-./music}:/music/source"
+      - "${MELOARK_MANAGED_PATH:-./organized}:/music/organized"
+    tmpfs:
+      - /tmp:size=64m,mode=1777

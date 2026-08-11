@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.production
 data/
 target/
 apps/server/target/
@@ -10,3 +11,4 @@ apps/web/node_modules/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.codewhale

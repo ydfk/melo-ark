@@ -15,7 +15,7 @@ MeloArk 是面向 NAS / HomeLab 的自托管本地音乐管理、整理与播放
 - OpenSubsonic/Subsonic Server API，供 Symfonium 等客户端连接；
 - 单用户管理员、持久化长任务、SSE 进度与审计日志。
 
-首版支持 `linux/amd64`、SQLite 与单 Docker 镜像。产品边界见 [`plan.md`](plan.md)，逐项审计见 [`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md)，实现证据见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)。
+首版发布同时支持 `linux/amd64` 与 `linux/arm64`、SQLite 与单 Docker 镜像。产品边界见 [`plan.md`](plan.md)，逐项审计见 [`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md)，实现证据见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)。
 
 ## Docker 启动
 
@@ -29,6 +29,15 @@ docker compose logs -f meloark
 打开 `http://localhost:31000`，首次启动创建唯一管理员。宿主机目录必须先通过 Compose Volume 挂载；Web 中填写容器路径（例如 `/music/source`），不能填写 `/mnt/nas/...` 等宿主机路径。
 
 只读来源和多曲库示例位于 [`examples/compose`](examples/compose)。完整部署与升级步骤见 [`docs/deployment.md`](docs/deployment.md)。
+
+生产服务器应使用只拉取版本镜像的 [`compose.production.yaml`](compose.production.yaml)：
+
+```bash
+cp .env.production.example .env.production
+# 创建三个宿主机目录，确保 UID/GID 10001 可写数据与整理目录
+# 设置随机 JWT Secret，并固定 MELOARK_IMAGE 版本
+docker compose --env-file .env.production -f compose.production.yaml up -d
+```
 
 ## OpenSubsonic
 
