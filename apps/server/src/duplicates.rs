@@ -126,7 +126,7 @@ pub async fn create_job(
     let id = Uuid::new_v4();
     let now = Utc::now();
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
-    sqlx::query("INSERT INTO jobs (id, kind, status, total_items, created_at, updated_at) VALUES (?, 'analyze', 'queued', ?, ?, ?)")
+    sqlx::query("INSERT INTO jobs (id, kind, status, source_type, source_id, total_items, created_at, updated_at) VALUES (?, 'analyze', 'queued', 'workspace', 'duplicates', ?, ?, ?)")
         .bind(id).bind(i64::try_from(targets.len()).unwrap_or(i64::MAX)).bind(now).bind(now)
         .execute(&mut *transaction).await.map_err(AppError::internal)?;
     sqlx::query("INSERT INTO analysis_jobs (job_id, calculate_hash, calculate_fingerprint, created_at) VALUES (?, ?, ?, ?)")
@@ -139,6 +139,16 @@ pub async fn create_job(
     }
     transaction.commit().await.map_err(AppError::internal)?;
     let job = crate::jobs::fetch_job(&state.pool, id).await?;
+    crate::jobs::record_log(
+        state,
+        id,
+        "info",
+        "queued",
+        None,
+        None,
+        "重复文件分析已加入队列",
+    )
+    .await?;
     crate::jobs::emit(state, job.clone());
     spawn_job(state.clone(), id);
     Ok(job)
@@ -150,6 +160,16 @@ pub fn spawn_job(state: AppState, id: Uuid) {
             let _ = sqlx::query("UPDATE jobs SET status = 'failed', error_message = ?, finished_at = ?, updated_at = ? WHERE id = ?")
                 .bind(error.to_string()).bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await;
             if let Ok(job) = crate::jobs::fetch_job(&state.pool, id).await {
+                let _ = crate::jobs::record_log(
+                    &state,
+                    id,
+                    "error",
+                    "failed",
+                    None,
+                    None,
+                    &error.to_string(),
+                )
+                .await;
                 crate::jobs::emit(&state, job);
             }
         }
@@ -177,6 +197,16 @@ async fn run_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
         .map_err(AppError::internal)?;
     sqlx::query("UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), finished_at = NULL, updated_at = ? WHERE id = ? AND status IN ('queued','interrupted')")
         .bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
+    crate::jobs::record_log(
+        state,
+        id,
+        "info",
+        "started",
+        None,
+        None,
+        "重复文件分析开始执行",
+    )
+    .await?;
     let (calculate_hash, calculate_fingerprint): (bool, bool) = sqlx::query_as(
         "SELECT calculate_hash, calculate_fingerprint FROM analysis_jobs WHERE job_id = ?",
     )
@@ -192,6 +222,21 @@ async fn run_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
         }
         sqlx::query("UPDATE job_items SET status = 'running', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?")
             .bind(Utc::now()).bind(item_id).execute(&state.pool).await.map_err(AppError::internal)?;
+        let attempt: i64 = sqlx::query_scalar("SELECT attempt_count FROM job_items WHERE id = ?")
+            .bind(item_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
+        crate::jobs::record_log(
+            state,
+            id,
+            "info",
+            "item_started",
+            Some(&item_key),
+            Some(attempt),
+            "开始分析文件",
+        )
+        .await?;
         let result = match Uuid::parse_str(&item_key) {
             Ok(media_id) => {
                 analyze_one(state, media_id, calculate_hash, calculate_fingerprint).await
@@ -204,6 +249,17 @@ async fn run_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
         };
         sqlx::query("UPDATE job_items SET status = ?, message = ?, retryable = ?, updated_at = ? WHERE id = ?")
             .bind(status).bind(&message).bind(status == "failed").bind(Utc::now()).bind(item_id).execute(&state.pool).await.map_err(AppError::internal)?;
+        let level = if status == "failed" { "error" } else { "info" };
+        crate::jobs::record_log(
+            state,
+            id,
+            level,
+            status,
+            Some(&item_key),
+            Some(attempt),
+            message.as_deref().unwrap_or("处理成功"),
+        )
+        .await?;
         update_job_progress(state, id, &item_key).await?;
     }
     rebuild_groups(state).await?;
@@ -221,6 +277,7 @@ async fn run_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
     sqlx::query("UPDATE jobs SET status = ?, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?")
         .bind(status).bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
     crate::jobs::emit(state, crate::jobs::fetch_job(&state.pool, id).await?);
+    crate::jobs::record_log(state, id, "info", status, None, None, "重复文件分析完成").await?;
     Ok(())
 }
 
@@ -237,6 +294,16 @@ async fn wait_runnable(state: &AppState, id: Uuid) -> Result<bool, AppError> {
                 sqlx::query("UPDATE jobs SET status = 'cancelled', finished_at = ?, updated_at = ? WHERE id = ?")
                     .bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
                 crate::jobs::emit(state, crate::jobs::fetch_job(&state.pool, id).await?);
+                crate::jobs::record_log(
+                    state,
+                    id,
+                    "warn",
+                    "cancelled",
+                    None,
+                    None,
+                    "重复文件分析已取消",
+                )
+                .await?;
                 return Ok(false);
             }
             _ => return Ok(true),
@@ -443,6 +510,7 @@ fn quality_score(item: &AnalysisTarget) -> i64 {
 }
 
 pub async fn rebuild_groups(state: &AppState) -> Result<(), AppError> {
+    let fingerprint_threshold = state.runtime.read().await.editable.fingerprint_threshold;
     let targets = load_targets(state, &[]).await?;
     let rows = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>, Option<i64>, Option<i64>)>("SELECT id, full_hash, fingerprint_json, fingerprint_duration_ms, quality_score FROM media_files")
         .fetch_all(&state.pool).await.map_err(AppError::internal)?;
@@ -520,7 +588,7 @@ pub async fn rebuild_groups(state: &AppState) -> Result<(), AppError> {
                     - b.fingerprint_duration_ms.unwrap_or_default())
                 .abs();
                 let similarity = fingerprint_similarity(af, bf);
-                if similarity >= state.analysis.fingerprint_threshold && duration_diff <= 2_500 {
+                if similarity >= fingerprint_threshold && duration_diff <= 2_500 {
                     groups.push((
                         "audio_duplicate".to_owned(),
                         (similarity * 100.0).round() as i64,
@@ -734,7 +802,7 @@ fn safe_path(target: &AnalysisTarget) -> Result<PathBuf, AppError> {
         .canonicalize()
         .map_err(AppError::internal)?;
     if !path.starts_with(root) {
-        return Err(AppError::BadRequest("媒体路径逃逸 Library Root".to_owned()));
+        return Err(AppError::BadRequest("媒体路径超出曲库范围".to_owned()));
     }
     Ok(path)
 }

@@ -298,12 +298,18 @@ pub fn parse_range(value: &str, size: u64) -> Result<(u64, u64), AppError> {
 }
 
 async fn evict_cache(state: &AppState) -> Result<(), AppError> {
+    let cache_max_bytes = state
+        .runtime
+        .read()
+        .await
+        .editable
+        .transcode_cache_max_bytes;
     let mut total: i64 =
         sqlx::query_scalar("SELECT COALESCE(SUM(file_size),0) FROM transcode_cache")
             .fetch_one(&state.pool)
             .await
             .map_err(AppError::internal)?;
-    if total <= state.playback.cache_max_bytes {
+    if total <= cache_max_bytes {
         return Ok(());
     }
     let entries = sqlx::query_as::<_, (String, String, i64)>(
@@ -313,7 +319,7 @@ async fn evict_cache(state: &AppState) -> Result<(), AppError> {
     .await
     .map_err(AppError::internal)?;
     for (key, path, size) in entries {
-        if total <= state.playback.cache_max_bytes {
+        if total <= cache_max_bytes {
             break;
         }
         let _ = tokio::fs::remove_file(path).await;
@@ -480,7 +486,7 @@ pub fn safe_path(target: &StreamTarget) -> Result<PathBuf, AppError> {
         .canonicalize()
         .map_err(AppError::internal)?;
     if !path.starts_with(root) {
-        return Err(AppError::BadRequest("媒体路径逃逸 Library Root".to_owned()));
+        return Err(AppError::BadRequest("媒体路径超出曲库范围".to_owned()));
     }
     Ok(path)
 }

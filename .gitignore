@@ -12,3 +12,4 @@ apps/web/node_modules/
 *.sqlite-shm
 *.sqlite-wal
 .codewhale
+.history

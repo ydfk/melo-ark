@@ -63,16 +63,14 @@ export function TrackArtworkPanel({
             reader.readAsDataURL(file);
           }}
         />
-        <FieldDescription>
-          支持 JPEG、PNG、WebP；选择后仍需到 Tag 页生成 Diff 并确认。
-        </FieldDescription>
+        <FieldDescription>支持 JPEG、PNG、WebP；选择后仍需到标签页确认。</FieldDescription>
       </Field>
 
       {pending ? (
         <Alert>
           <ImagePlus />
           <AlertTitle>新封面已进入草稿</AlertTitle>
-          <AlertDescription>文件尚未被修改。前往 Tag 页检查 Diff 后再确认写入。</AlertDescription>
+          <AlertDescription>文件尚未修改，请前往标签页确认写入。</AlertDescription>
         </Alert>
       ) : null}
     </div>

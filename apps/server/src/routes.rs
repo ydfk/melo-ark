@@ -1,12 +1,14 @@
 mod ai;
 mod auth;
 mod duplicates;
+mod filesystem;
 mod jobs;
 mod libraries;
 mod lyrics;
 mod organizer;
 mod playback;
 mod scraper;
+mod settings;
 mod system;
 mod tags;
 mod tracks;
@@ -20,7 +22,7 @@ use crate::{
     ai::{AiDuplicateRequest, AiRecommendation, AiRerankRequest, AiStatus},
     duplicates::{AnalyzeRequest, DuplicateGroup, DuplicateMember},
     error::Problem,
-    jobs::{JobEvent, JobResponse},
+    jobs::{JobEvent, JobLogPage, JobLogResponse, JobResponse},
     library::{
         CapabilityResponse, CreateLibraryRequest, LibraryResponse, PathPreflightRequest,
         PathPreflightResponse, UpdateLibraryRequest,
@@ -34,6 +36,9 @@ use crate::{
     playback::{
         CreatePlaylistRequest, PlaybackHistory, Playlist, ScrobbleRequest, TranscodeQuery,
         UpdatePlaylistRequest,
+    },
+    runtime_settings::{
+        EditableSettings, InfrastructureSettings, SettingsResponse, UpdateSettingsRequest,
     },
     scraper::{
         BatchScrapeRequest, ProviderFailure, ProviderSetting, ScrapeApplyRequest, ScrapeCandidate,
@@ -51,7 +56,11 @@ use crate::{
 };
 
 use self::{
-    auth::{Credentials, SetupStatusResponse, TokenResponse},
+    auth::{
+        Credentials, SetupStatusResponse, TokenResponse, UpdateProfileRequest,
+        UpdateProfileResponse,
+    },
+    filesystem::{DirectoryEntry, DirectoryListing},
     system::{
         DashboardRecentPlay, DashboardRecentTrack, DashboardStatsResponse, FormatDistribution,
         HealthResponse,
@@ -71,6 +80,10 @@ use self::{
         auth::setup,
         auth::login,
         auth::profile,
+        auth::update_profile,
+        filesystem::list_directories,
+        settings::get_settings,
+        settings::update_settings,
         libraries::list,
         libraries::create,
         libraries::update,
@@ -80,6 +93,7 @@ use self::{
         libraries::scan,
         jobs::list,
         jobs::get_one,
+        jobs::logs,
         jobs::pause,
         jobs::resume,
         jobs::cancel,
@@ -137,6 +151,8 @@ use self::{
     components(schemas(
         Credentials,
         TokenResponse,
+        UpdateProfileRequest,
+        UpdateProfileResponse,
         SetupStatusResponse,
         HealthResponse,
         DashboardStatsResponse,
@@ -144,6 +160,12 @@ use self::{
         DashboardRecentTrack,
         DashboardRecentPlay,
         UserResponse,
+        DirectoryEntry,
+        DirectoryListing,
+        EditableSettings,
+        InfrastructureSettings,
+        SettingsResponse,
+        UpdateSettingsRequest,
         Problem,
         LibraryResponse,
         CreateLibraryRequest,
@@ -152,6 +174,8 @@ use self::{
         PathPreflightResponse,
         CapabilityResponse,
         JobResponse,
+        JobLogResponse,
+        JobLogPage,
         JobEvent,
         TrackResponse,
         TrackListResponse,
@@ -211,14 +235,15 @@ use self::{
     tags(
         (name = "system", description = "服务与曲库健康状态"),
         (name = "auth", description = "单管理员认证"),
+        (name = "settings", description = "运行设置与部署信息"),
         (name = "libraries", description = "曲库根目录"),
         (name = "jobs", description = "持久化任务"),
         (name = "tracks", description = "逻辑歌曲与物理文件索引"),
         (name = "tags", description = "Tag 预览、写入与撤销"),
         (name = "organizer", description = "Hardlink Dry Run 与执行"),
-        (name = "trash", description = "Library Root 回收站"),
+        (name = "trash", description = "曲库回收站"),
         (name = "operations", description = "持久化操作日志"),
-        (name = "providers", description = "刮削 Provider 健康、优先级与启停"),
+        (name = "providers", description = "在线数据源健康状态、优先级与启停"),
         (name = "scraper", description = "多源候选、置信度评分与应用预览"),
         (name = "lyrics", description = "歌词候选、质量评分与显式写入"),
         (name = "duplicates", description = "分层重复分析与 Quality Score"),
@@ -254,6 +279,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::opensubsonic::router())
         .merge(playback::router())
         .merge(auth::router())
+        .merge(filesystem::router())
+        .merge(settings::router())
         .merge(libraries::router())
         .merge(organizer::router())
         .merge(scraper::router())

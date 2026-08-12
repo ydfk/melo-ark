@@ -9,6 +9,7 @@ pub struct UserRecord {
     pub id: Uuid,
     pub username: String,
     pub password_hash: String,
+    pub must_change_password: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -18,6 +19,7 @@ pub struct UserRecord {
 pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
+    pub password_change_required: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -27,6 +29,7 @@ impl From<UserRecord> for UserResponse {
         Self {
             id: user.id,
             username: user.username,
+            password_change_required: user.must_change_password,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }

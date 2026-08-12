@@ -1,5 +1,4 @@
 import {
-  CloudCog,
   CopyCheck,
   LayoutDashboard,
   Library,
@@ -29,7 +28,6 @@ export type DashboardTab =
   | "dashboard"
   | "library"
   | "tasks"
-  | "providers"
   | "duplicates"
   | "playback"
   | "trash"
@@ -44,12 +42,11 @@ type DashboardCommandPaletteProps = {
 const destinations = [
   { value: "dashboard" as const, label: "打开总览", icon: LayoutDashboard, shortcut: "⌃1" },
   { value: "library" as const, label: "打开曲库", icon: Library, shortcut: "⌃2" },
-  { value: "tasks" as const, label: "打开任务中心", icon: ListMusic, shortcut: "⌃3" },
-  { value: "providers" as const, label: "打开 Provider 舱", icon: CloudCog, shortcut: "⌃4" },
-  { value: "duplicates" as const, label: "打开重复分析", icon: CopyCheck, shortcut: "⌃5" },
-  { value: "playback" as const, label: "打开播放中心", icon: RadioTower, shortcut: "⌃6" },
-  { value: "trash" as const, label: "打开回收站", icon: Trash2, shortcut: "⌃7" },
-  { value: "settings" as const, label: "打开设置", icon: Settings, shortcut: "⌃8" },
+  { value: "duplicates" as const, label: "打开重复文件", icon: CopyCheck, shortcut: "⌃3" },
+  { value: "tasks" as const, label: "打开任务", icon: ListMusic, shortcut: "⌃4" },
+  { value: "playback" as const, label: "打开播放与歌单", icon: RadioTower, shortcut: "⌃5" },
+  { value: "trash" as const, label: "打开回收站", icon: Trash2, shortcut: "⌃6" },
+  { value: "settings" as const, label: "打开设置", icon: Settings, shortcut: "⌃7" },
 ];
 
 export function DashboardCommandPalette({

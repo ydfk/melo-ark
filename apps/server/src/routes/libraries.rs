@@ -76,7 +76,6 @@ pub async fn create(
     Json(request): Json<CreateLibraryRequest>,
 ) -> Result<(StatusCode, Json<LibraryResponse>), AppError> {
     require_user_id(&headers, &state)?;
-    validate_name(&request.name)?;
     validate_role(&request.role)?;
     let (canonical, path_status) = preflight_path(&request.path)?;
     if request.writable && !path_status.writable {
@@ -98,7 +97,7 @@ pub async fn create(
         "#,
     )
     .bind(id)
-    .bind(request.name.trim())
+    .bind(&canonical_path)
     .bind(canonical_path)
     .bind(request.scan_enabled)
     .bind(request.watch_enabled)
@@ -137,8 +136,6 @@ pub async fn update(
 ) -> Result<Json<LibraryResponse>, AppError> {
     require_user_id(&headers, &state)?;
     let current = fetch_library(&state, id).await?;
-    let name = request.name.unwrap_or(current.name);
-    validate_name(&name)?;
     let role = request.role.unwrap_or(current.role);
     validate_role(&role)?;
     let path = if let Some(path) = request.path {
@@ -169,7 +166,7 @@ pub async fn update(
           writable = ?, role = ?, exclude_patterns = ?, updated_at = ? WHERE id = ?
         "#,
     )
-    .bind(name.trim())
+    .bind(&path)
     .bind(path)
     .bind(request.scan_enabled.unwrap_or(current.scan_enabled))
     .bind(request.watch_enabled.unwrap_or(current.watch_enabled))
@@ -217,6 +214,11 @@ pub async fn delete(
         ));
     }
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
+    sqlx::query("DELETE FROM jobs WHERE library_id = ? AND kind = 'scan'")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(AppError::internal)?;
     sqlx::query("DELETE FROM libraries WHERE id = ?")
         .bind(id)
         .execute(&mut *transaction)
@@ -300,7 +302,7 @@ pub async fn scan(
     require_user_id(&headers, &state)?;
     let library = fetch_library(&state, id).await?;
     if !library.scan_enabled {
-        return Err(AppError::Conflict("该 Library Root 已禁用扫描".to_owned()));
+        return Err(AppError::Conflict("该曲库已禁用扫描".to_owned()));
     }
     let job = scanner::enqueue_scan(state, id).await?;
     Ok((StatusCode::ACCEPTED, Json(job)))
@@ -318,7 +320,7 @@ pub(crate) async fn fetch_library(state: &AppState, id: Uuid) -> Result<LibraryR
     .fetch_optional(&state.pool)
     .await
     .map_err(AppError::internal)?
-    .ok_or_else(|| AppError::NotFound("Library Root 不存在".to_owned()))
+    .ok_or_else(|| AppError::NotFound("曲库不存在".to_owned()))
 }
 
 async fn ensure_path_available(
@@ -332,19 +334,7 @@ async fn ensure_path_available(
         .await
         .map_err(AppError::internal)?;
     if existing.is_some_and(|id| Some(id) != current_id) {
-        return Err(AppError::Conflict(
-            "该容器内路径已经配置为 Library Root".to_owned(),
-        ));
+        return Err(AppError::Conflict("该路径已经配置为曲库".to_owned()));
     }
     Ok(())
-}
-
-fn validate_name(name: &str) -> Result<(), AppError> {
-    if (1..=80).contains(&name.trim().chars().count()) {
-        Ok(())
-    } else {
-        Err(AppError::BadRequest(
-            "Library 名称长度必须为 1 到 80 个字符".to_owned(),
-        ))
-    }
 }

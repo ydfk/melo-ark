@@ -27,12 +27,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import { OperationPreview } from "@/features/library/operation-preview";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import {
   applyOrganizer,
   applyTrash,
   applyTags,
   getTrack,
   getTrackFiles,
+  getRuntimeSettings,
   previewOrganizer,
   previewTrash,
   restoreTrash,
@@ -90,6 +93,7 @@ export function TrackWorkbench({
   onOpenChange,
   onChanged,
 }: TrackWorkbenchProps) {
+  const { latestJob } = useJobActivity();
   const [track, setTrack] = useState<TrackDetail>();
   const [files, setFiles] = useState<MediaFile[]>([]);
   const [values, setValues] = useState<EditValues>();
@@ -109,10 +113,20 @@ export function TrackWorkbench({
   useEffect(() => {
     if (!open || !trackId) return;
     setOperation(undefined);
-    Promise.all([getTrack(trackId).send(), getTrackFiles(trackId).send()])
-      .then(([nextTrack, nextFiles]) => {
+    Promise.all([
+      getTrack(trackId).send(),
+      getTrackFiles(trackId).send(),
+      getRuntimeSettings()
+        .send()
+        .catch(() => undefined),
+    ])
+      .then(([nextTrack, nextFiles, runtimeSettings]) => {
         setTrack(nextTrack);
         setFiles(nextFiles);
+        if (runtimeSettings) {
+          setTemplate(runtimeSettings.values.organizerTemplate);
+          setCrossPlatformSafe(runtimeSettings.values.organizerCrossPlatformSafe);
+        }
         setValues({
           title: nextTrack.title,
           artists: nextTrack.artists,
@@ -220,7 +234,7 @@ export function TrackWorkbench({
     setBusy(true);
     try {
       setOperation(await applyOrganizer(operation.id).send());
-      toast.success("Hardlink 整理已执行");
+      toast.success("硬链接整理已执行");
       await onChanged();
     } catch (error) {
       showError(error);
@@ -259,7 +273,7 @@ export function TrackWorkbench({
     setBusy(true);
     try {
       setOperation(await applyTrash(operation.id).send());
-      toast.success("文件已移入 Library Root 回收站");
+      toast.success("文件已移入曲库回收站");
       await onChanged();
     } catch (error) {
       showError(error);
@@ -315,9 +329,7 @@ export function TrackWorkbench({
             {!writableFiles.length ? (
               <Alert variant="destructive">
                 <AlertTitle>当前文件不可写</AlertTitle>
-                <AlertDescription>
-                  需要把来源 Library Root 标记为允许写入，Tag Apply 才会执行。
-                </AlertDescription>
+                <AlertDescription>来源曲库需要允许写入。</AlertDescription>
               </Alert>
             ) : null}
             {values ? (
@@ -376,6 +388,13 @@ export function TrackWorkbench({
               <Switch id="simplify-tags" checked={simplify} onCheckedChange={setSimplify} />
             </Field>
             <OperationPreview operation={operation?.kind === "tag_edit" ? operation : undefined} />
+            <InlineJobStatus
+              job={
+                operation?.kind === "tag_edit"
+                  ? latestJob("operation", operation.id, "tag_edit")
+                  : undefined
+              }
+            />
             <div className="flex flex-wrap justify-end gap-2">
               {operation?.kind === "tag_edit" && operation.status === "completed" ? (
                 <Button variant="outline" onClick={() => void revertTags()} disabled={busy}>
@@ -389,7 +408,7 @@ export function TrackWorkbench({
                 disabled={busy || !writableFiles.length}
               >
                 <WandSparkles data-icon="inline-start" />
-                生成 Diff
+                生成变更预览
               </Button>
               {operation?.kind === "tag_edit" && operation.status === "previewed" ? (
                 <Button onClick={() => void confirmTags()} disabled={busy}>
@@ -407,7 +426,7 @@ export function TrackWorkbench({
                   <div className="min-w-0">
                     <p className="truncate font-medium">{file.path}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {file.libraryName} · dev {file.deviceId} · inode {file.inode}
+                      {file.libraryPath} · dev {file.deviceId} · inode {file.inode}
                     </p>
                   </div>
                   <Badge variant="secondary">{file.extension.toUpperCase()}</Badge>
@@ -435,6 +454,13 @@ export function TrackWorkbench({
               </div>
             ))}
             <OperationPreview operation={operation?.kind === "trash" ? operation : undefined} />
+            <InlineJobStatus
+              job={
+                operation?.kind === "trash"
+                  ? latestJob("operation", operation.id, "trash")
+                  : undefined
+              }
+            />
             {operation?.kind === "trash" ? (
               <div className="flex justify-end gap-2">
                 {operation.status === "completed" ? (
@@ -456,13 +482,11 @@ export function TrackWorkbench({
           <TabsContent value="organizer" className="mt-5 space-y-5">
             <Alert>
               <Link2 />
-              <AlertTitle>默认只创建 Hardlink</AlertTitle>
-              <AlertDescription>
-                跨文件系统直接失败；目标冲突不会覆盖，也不会自动 Copy。
-              </AlertDescription>
+              <AlertTitle>默认只创建硬链接</AlertTitle>
+              <AlertDescription>不能跨文件系统，目标冲突时不会覆盖。</AlertDescription>
             </Alert>
             <Field>
-              <FieldLabel>目标 Library Root</FieldLabel>
+              <FieldLabel>目标曲库</FieldLabel>
               <Select value={targetLibraryId} onValueChange={setTargetLibraryId}>
                 <SelectTrigger>
                   <SelectValue placeholder="选择可写的已整理曲库" />
@@ -470,7 +494,7 @@ export function TrackWorkbench({
                 <SelectContent>
                   {organizerTargets.map((library) => (
                     <SelectItem key={library.id} value={library.id}>
-                      {library.name}
+                      {library.path}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -500,6 +524,13 @@ export function TrackWorkbench({
               />
             </Field>
             <OperationPreview operation={operation?.kind === "organize" ? operation : undefined} />
+            <InlineJobStatus
+              job={
+                operation?.kind === "organize"
+                  ? latestJob("operation", operation.id, "organize")
+                  : undefined
+              }
+            />
             <div className="flex flex-wrap justify-end gap-2">
               {operation?.kind === "organize" && operation.status === "completed" ? (
                 <Button variant="outline" onClick={() => void revertOrganizer()} disabled={busy}>
@@ -524,7 +555,7 @@ export function TrackWorkbench({
                   }
                 >
                   <ArrowRight data-icon="inline-start" />
-                  确认 Hardlink
+                  确认创建硬链接
                 </Button>
               ) : null}
             </div>

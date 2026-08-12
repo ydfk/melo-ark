@@ -139,7 +139,7 @@ export function PlayerBar() {
           }
         }}
       />
-      <div className="mx-auto grid max-w-7xl items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(18rem,2fr)_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-[1680px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(18rem,2fr)_minmax(0,1fr)]">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="truncate font-medium">{current.title}</p>

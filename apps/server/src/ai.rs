@@ -39,12 +39,13 @@ pub struct AiRerankRequest {
     pub confirmation: String,
 }
 
-pub fn status(state: &AppState) -> AiStatus {
+pub async fn status(state: &AppState) -> AiStatus {
+    let runtime = state.runtime.read().await;
     AiStatus {
-        enabled: state.ai.enabled,
-        base_url: state.ai.base_url.clone(),
-        model: state.ai.model.clone(),
-        api_key_configured: !state.ai.api_key.is_empty(),
+        enabled: runtime.editable.ai_enabled,
+        base_url: runtime.editable.ai_base_url.clone(),
+        model: runtime.editable.ai_model.clone(),
+        api_key_configured: !runtime.ai_api_key.is_empty(),
         uploads_audio: false,
     }
 }
@@ -58,7 +59,7 @@ pub async fn explain_duplicate(
             "AI 请求需要显式确认 SEND_METADATA".to_owned(),
         ));
     }
-    ensure_enabled(state)?;
+    ensure_enabled(state).await?;
     let group = duplicates::get_group(state, request.group_id).await?;
     let payload = serde_json::json!({
         "task": "classify_duplicate_relation",
@@ -84,7 +85,7 @@ pub async fn rerank_candidates(
             "AI 请求需要显式确认 SEND_METADATA".to_owned(),
         ));
     }
-    ensure_enabled(state)?;
+    ensure_enabled(state).await?;
     if request.candidate_ids.is_empty() || request.candidate_ids.len() > 20 {
         return Err(AppError::BadRequest(
             "候选数量必须在 1 到 20 之间".to_owned(),
@@ -99,15 +100,22 @@ pub async fn rerank_candidates(
     call_and_store(state, "scrape_candidates", request.track_id, payload).await
 }
 
-fn ensure_enabled(state: &AppState) -> Result<(), AppError> {
-    if !state.ai.enabled {
+async fn ensure_enabled(state: &AppState) -> Result<(), AppError> {
+    let runtime = state.runtime.read().await;
+    if !runtime.editable.ai_enabled {
         return Err(AppError::BadRequest(
             "AI 未启用；核心功能不依赖 AI".to_owned(),
         ));
     }
-    if !(state.ai.base_url.starts_with("https://")
-        || state.ai.base_url.starts_with("http://127.0.0.1:")
-        || state.ai.base_url.starts_with("http://localhost:"))
+    if !(runtime.editable.ai_base_url.starts_with("https://")
+        || runtime
+            .editable
+            .ai_base_url
+            .starts_with("http://127.0.0.1:")
+        || runtime
+            .editable
+            .ai_base_url
+            .starts_with("http://localhost:"))
     {
         return Err(AppError::BadRequest(
             "AI base_url 必须使用 HTTPS；本地网关可使用 localhost HTTP".to_owned(),
@@ -122,18 +130,21 @@ async fn call_and_store(
     subject_id: Uuid,
     payload: serde_json::Value,
 ) -> Result<AiRecommendation, AppError> {
+    let runtime = state.runtime.read().await.clone();
     let system = "You classify music metadata only. Never recommend deleting a file. Return JSON only: {\"relation\":string,\"confidence\":number between 0 and 1,\"reason\":string}.";
-    let request_body = serde_json::json!({ "model": state.ai.model, "messages": [ {"role":"system","content":system}, {"role":"user","content":serde_json::to_string(&payload).map_err(AppError::internal)?} ], "response_format": {"type":"json_object"}, "temperature": 0.1 });
+    let request_body = serde_json::json!({ "model": runtime.editable.ai_model, "messages": [ {"role":"system","content":system}, {"role":"user","content":serde_json::to_string(&payload).map_err(AppError::internal)?} ], "response_format": {"type":"json_object"}, "temperature": 0.1 });
     let endpoint = format!(
         "{}/v1/chat/completions",
-        state.ai.base_url.trim_end_matches('/')
+        runtime.editable.ai_base_url.trim_end_matches('/')
     );
     let response: serde_json::Value = state
         .http
         .post(endpoint)
-        .bearer_auth(&state.ai.api_key)
+        .bearer_auth(&runtime.ai_api_key)
         .json(&request_body)
-        .timeout(std::time::Duration::from_secs(state.ai.timeout_sec))
+        .timeout(std::time::Duration::from_secs(
+            runtime.editable.ai_timeout_sec,
+        ))
         .send()
         .await
         .map_err(AppError::internal)?

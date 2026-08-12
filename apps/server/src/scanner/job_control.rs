@@ -51,6 +51,23 @@ pub(super) async fn upsert_running_item(
     .execute(&state.pool)
     .await
     .map_err(AppError::internal)?;
+    let attempt: i64 =
+        sqlx::query_scalar("SELECT attempt_count FROM job_items WHERE job_id = ? AND item_key = ?")
+            .bind(job_id)
+            .bind(key)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
+    jobs::record_log(
+        state,
+        job_id,
+        "info",
+        "item_started",
+        Some(key),
+        Some(attempt),
+        "开始处理",
+    )
+    .await?;
     Ok(())
 }
 
@@ -91,7 +108,15 @@ pub(super) async fn record_item_success(
         .await
         .map_err(AppError::internal)?;
     }
-    transaction.commit().await.map_err(AppError::internal)
+    transaction.commit().await.map_err(AppError::internal)?;
+    let event_type = if skipped { "skipped" } else { "success" };
+    let message = if skipped {
+        "文件未变化"
+    } else {
+        "处理成功"
+    };
+    jobs::record_log(state, job_id, "info", event_type, Some(key), None, message).await?;
+    Ok(())
 }
 
 pub(super) async fn record_item_failure(
@@ -123,7 +148,9 @@ pub(super) async fn record_item_failure(
     .execute(&mut *transaction)
     .await
     .map_err(AppError::internal)?;
-    transaction.commit().await.map_err(AppError::internal)
+    transaction.commit().await.map_err(AppError::internal)?;
+    jobs::record_log(state, job_id, "error", "failed", Some(key), None, message).await?;
+    Ok(())
 }
 
 pub(super) async fn record_walk_error(
@@ -148,6 +175,16 @@ pub(super) async fn finish_cancelled(state: &AppState, job_id: Uuid) -> Result<(
     .execute(&state.pool)
     .await
     .map_err(AppError::internal)?;
+    jobs::record_log(
+        state,
+        job_id,
+        "warn",
+        "cancelled",
+        None,
+        None,
+        "扫描任务已取消",
+    )
+    .await?;
     emit_current(state, job_id).await;
     Ok(())
 }
@@ -170,5 +207,5 @@ pub(super) async fn fetch_library(state: &AppState, id: Uuid) -> Result<LibraryR
     .fetch_optional(&state.pool)
     .await
     .map_err(AppError::internal)?
-    .ok_or_else(|| AppError::NotFound("Library Root 不存在".to_owned()))
+    .ok_or_else(|| AppError::NotFound("曲库不存在".to_owned()))
 }

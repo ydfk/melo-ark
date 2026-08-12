@@ -27,6 +27,9 @@ import type {
   PlaybackHistory,
   TrackOperationHistory,
   Playlist,
+  DirectoryListing,
+  RuntimeSettings,
+  EditableSettings,
 } from "@/lib/api/types";
 
 export const getDashboardStats = () => alovaInstance.Get<DashboardStats>("/dashboard/stats");
@@ -43,6 +46,17 @@ export const deleteLibrary = (id: string) => alovaInstance.Delete<void>(`/librar
 
 export const preflightLibraryPath = (path: string) =>
   alovaInstance.Post<PathPreflight>("/libraries/preflight", { path });
+
+export const getDirectories = (path: string) =>
+  alovaInstance.Get<DirectoryListing>("/filesystem/directories", { params: { path } });
+
+export const getRuntimeSettings = () => alovaInstance.Get<RuntimeSettings>("/settings");
+
+export const updateRuntimeSettings = (request: {
+  values: EditableSettings;
+  aiApiKey?: string;
+  clearAiApiKey?: boolean;
+}) => alovaInstance.Patch<RuntimeSettings>("/settings", request);
 
 export const scanLibrary = (id: string) => alovaInstance.Post<Job>(`/libraries/${id}/scan`);
 
@@ -155,6 +169,7 @@ export const searchLyrics = (trackId: string) =>
   alovaInstance.Post<LyricsSearchResponse>("/lyrics/search", { trackId });
 
 export const applyLyrics = (request: {
+  jobId: string;
   lyricsId: string;
   mediaFileId: string;
   mode: "external" | "embedded" | "both";

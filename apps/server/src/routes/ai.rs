@@ -24,7 +24,7 @@ async fn status(
     headers: HeaderMap,
 ) -> Result<Json<AiStatus>, AppError> {
     require_user_id(&headers, &state)?;
-    Ok(Json(ai::status(&state)))
+    Ok(Json(ai::status(&state).await))
 }
 #[utoipa::path(post, path = "/api/ai/duplicates/explain", tag = "ai", request_body = AiDuplicateRequest, security(("bearerAuth" = [])), responses((status = 200, body = AiRecommendation)))]
 async fn explain(

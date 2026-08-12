@@ -36,7 +36,6 @@ pub struct LibraryRecord {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryResponse {
     pub id: Uuid,
-    pub name: String,
     pub path: String,
     pub scan_enabled: bool,
     pub watch_enabled: bool,
@@ -53,7 +52,6 @@ impl From<LibraryRecord> for LibraryResponse {
         let exclude_patterns = serde_json::from_str(&record.exclude_patterns).unwrap_or_default();
         Self {
             id: record.id,
-            name: record.name,
             path: record.path,
             scan_enabled: record.scan_enabled,
             watch_enabled: record.watch_enabled,
@@ -70,7 +68,6 @@ impl From<LibraryRecord> for LibraryResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateLibraryRequest {
-    pub name: String,
     pub path: String,
     #[serde(default = "default_true")]
     pub scan_enabled: bool,
@@ -86,7 +83,6 @@ pub struct CreateLibraryRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateLibraryRequest {
-    pub name: Option<String>,
     pub path: Option<String>,
     pub scan_enabled: Option<bool>,
     pub watch_enabled: Option<bool>,
@@ -145,18 +141,16 @@ pub fn capabilities() -> Vec<CapabilityResponse> {
 pub fn preflight_path(input: &str) -> Result<(PathBuf, PathPreflightResponse), AppError> {
     let requested = Path::new(input);
     if !requested.is_absolute() {
-        return Err(AppError::BadRequest(
-            "Library Root 必须使用容器内绝对路径".to_owned(),
-        ));
+        return Err(AppError::BadRequest("曲库必须使用绝对路径".to_owned()));
     }
     let canonical = requested
         .canonicalize()
-        .map_err(|error| AppError::BadRequest(format!("无法访问 Library Root：{error}")))?;
+        .map_err(|error| AppError::BadRequest(format!("无法访问曲库：{error}")))?;
     let metadata = canonical
         .metadata()
-        .map_err(|error| AppError::BadRequest(format!("无法读取 Library Root：{error}")))?;
+        .map_err(|error| AppError::BadRequest(format!("无法读取曲库：{error}")))?;
     if !metadata.is_dir() {
-        return Err(AppError::BadRequest("Library Root 必须是目录".to_owned()));
+        return Err(AppError::BadRequest("曲库路径必须是目录".to_owned()));
     }
     let response = PathPreflightResponse {
         canonical_path: canonical.to_string_lossy().into_owned(),
@@ -167,7 +161,7 @@ pub fn preflight_path(input: &str) -> Result<(PathBuf, PathPreflightResponse), A
         device_id: device_id(&metadata),
     };
     if !response.readable {
-        return Err(AppError::BadRequest("Library Root 当前不可读".to_owned()));
+        return Err(AppError::BadRequest("曲库当前不可读".to_owned()));
     }
     Ok((canonical, response))
 }

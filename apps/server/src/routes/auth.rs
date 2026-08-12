@@ -10,7 +10,9 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    auth::{create_token, decode_subject, encrypt_subsonic_secret, hash_password, verify_password},
+    auth::{
+        create_token, decode_user_claims, encrypt_subsonic_secret, hash_password, verify_password,
+    },
     error::{AppError, Problem},
     model::{UserRecord, UserResponse},
     state::AppState,
@@ -23,7 +25,24 @@ pub struct Credentials {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TokenResponse {
+    pub token: String,
+    pub password_change_required: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProfileRequest {
+    pub username: Option<String>,
+    pub current_password: Option<String>,
+    pub new_password: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProfileResponse {
+    pub user: UserResponse,
     pub token: String,
 }
 
@@ -38,7 +57,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/setup-status", get(setup_status))
         .route("/api/auth/setup", post(setup))
         .route("/api/auth/login", post(login))
-        .route("/api/auth/profile", get(profile))
+        .route("/api/auth/profile", get(profile).patch(update_profile))
 }
 
 #[utoipa::path(
@@ -95,11 +114,12 @@ pub async fn setup(
         id: Uuid::new_v4(),
         username: credentials.username,
         password_hash,
+        must_change_password: false,
         created_at: now,
         updated_at: now,
     };
     sqlx::query(
-        "INSERT INTO users (id, username, password_hash, subsonic_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO users (id, username, password_hash, subsonic_secret, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)",
     )
     .bind(user.id)
     .bind(&user.username)
@@ -128,7 +148,7 @@ pub async fn login(
     State(state): State<AppState>,
     Json(credentials): Json<Credentials>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    validate_credentials(&credentials)?;
+    validate_login_credentials(&credentials)?;
     check_login_rate_limit(&state, &credentials.username).await?;
     let user = match find_user_by_username(&state, &credentials.username).await? {
         Some(user) => user,
@@ -147,8 +167,11 @@ pub async fn login(
         .lock()
         .await
         .remove(&credentials.username);
-    let token = create_token(&user.id.to_string(), &state.jwt)?;
-    Ok(Json(TokenResponse { token }))
+    let token = create_token(&user.id.to_string(), &state.jwt, user.must_change_password)?;
+    Ok(Json(TokenResponse {
+        token,
+        password_change_required: user.must_change_password,
+    }))
 }
 
 const LOGIN_FAILURE_LIMIT: usize = 5;
@@ -198,32 +221,140 @@ pub async fn profile(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<UserResponse>, AppError> {
-    let id = require_user_id(&headers, &state)?;
+    let (id, _) = require_profile_user(&headers, &state)?;
     let user = find_user_by_id(&state, id)
         .await?
         .ok_or_else(|| AppError::NotFound("用户不存在".to_owned()))?;
     Ok(Json(user.into()))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/auth/profile",
+    tag = "auth",
+    security(("bearerAuth" = [])),
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 200, description = "账号资料已更新", body = UpdateProfileResponse),
+        (status = 401, description = "当前密码错误", body = Problem),
+        (status = 409, description = "用户名已存在", body = Problem),
+        (status = 422, description = "资料不合法", body = Problem)
+    )
+)]
+pub async fn update_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateProfileRequest>,
+) -> Result<Json<UpdateProfileResponse>, AppError> {
+    let (id, token_requires_change) = require_profile_user(&headers, &state)?;
+    let user = find_user_by_id(&state, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("用户不存在".to_owned()))?;
+    let username = request
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(username) = username {
+        validate_username(username)?;
+    }
+    if let Some(password) = request.new_password.as_deref() {
+        validate_new_password(password)?;
+    }
+    if username.is_none() && request.new_password.is_none() {
+        return Err(AppError::BadRequest("没有需要保存的修改".to_owned()));
+    }
+    if token_requires_change && request.new_password.is_none() {
+        return Err(AppError::BadRequest("请先修改默认密码".to_owned()));
+    }
+    if !token_requires_change {
+        let current = request
+            .current_password
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::BadRequest("请输入当前密码".to_owned()))?;
+        if !verify_password(current.to_owned(), user.password_hash.clone()).await? {
+            return Err(AppError::Unauthorized("当前密码错误".to_owned()));
+        }
+    }
+    if let Some(username) = username {
+        let duplicate: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM users WHERE username = ? AND id != ?")
+                .bind(username)
+                .bind(id)
+                .fetch_optional(&state.pool)
+                .await
+                .map_err(AppError::internal)?;
+        if duplicate.is_some() {
+            return Err(AppError::Conflict("用户名已存在".to_owned()));
+        }
+    }
+
+    let now = Utc::now();
+    let password_update = if let Some(password) = request.new_password {
+        if verify_password(password.clone(), user.password_hash).await? {
+            return Err(AppError::BadRequest("新密码不能与当前密码相同".to_owned()));
+        }
+        Some((
+            hash_password(password.clone()).await?,
+            encrypt_subsonic_secret(&password, &state.jwt)?,
+        ))
+    } else {
+        None
+    };
+    sqlx::query(
+        r#"UPDATE users SET
+             username = COALESCE(?, username),
+             password_hash = COALESCE(?, password_hash),
+             subsonic_secret = COALESCE(?, subsonic_secret),
+             must_change_password = CASE WHEN ? IS NOT NULL THEN 0 ELSE must_change_password END,
+             updated_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(username)
+    .bind(password_update.as_ref().map(|value| &value.0))
+    .bind(password_update.as_ref().map(|value| &value.1))
+    .bind(password_update.as_ref().map(|value| &value.0))
+    .bind(now)
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+
+    let updated = find_user_by_id(&state, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("用户不存在".to_owned()))?;
+    let token = create_token(&id.to_string(), &state.jwt, updated.must_change_password)?;
+    Ok(Json(UpdateProfileResponse {
+        user: updated.into(),
+        token,
+    }))
+}
+
 pub(crate) fn require_user_id(headers: &HeaderMap, state: &AppState) -> Result<Uuid, AppError> {
+    let (id, password_change_required) = require_profile_user(headers, state)?;
+    if password_change_required {
+        return Err(AppError::Forbidden("请先修改默认密码".to_owned()));
+    }
+    Ok(id)
+}
+
+fn require_profile_user(headers: &HeaderMap, state: &AppState) -> Result<(Uuid, bool), AppError> {
     let token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|token| !token.is_empty())
         .ok_or_else(|| AppError::Unauthorized("请提供 Bearer Token".to_owned()))?;
-    let user_id = decode_subject(token, &state.jwt)?;
-    Uuid::parse_str(&user_id).map_err(|_| AppError::Unauthorized("认证信息无效".to_owned()))
+    let (user_id, password_change_required) = decode_user_claims(token, &state.jwt)?;
+    let id =
+        Uuid::parse_str(&user_id).map_err(|_| AppError::Unauthorized("认证信息无效".to_owned()))?;
+    Ok((id, password_change_required))
 }
 
 fn validate_credentials(credentials: &Credentials) -> Result<(), AppError> {
-    let username_length = credentials.username.chars().count();
+    validate_username(&credentials.username)?;
     let password_length = credentials.password.chars().count();
-    if !(1..=64).contains(&username_length) {
-        return Err(AppError::BadRequest(
-            "用户名长度必须为 1 到 64 个字符".to_owned(),
-        ));
-    }
     if !(6..=72).contains(&password_length) {
         return Err(AppError::BadRequest(
             "密码长度必须为 6 到 72 个字符".to_owned(),
@@ -232,12 +363,42 @@ fn validate_credentials(credentials: &Credentials) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_login_credentials(credentials: &Credentials) -> Result<(), AppError> {
+    validate_username(&credentials.username)?;
+    if !(1..=72).contains(&credentials.password.chars().count()) {
+        return Err(AppError::BadRequest(
+            "密码不能为空且不能超过 72 个字符".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_username(username: &str) -> Result<(), AppError> {
+    if (1..=64).contains(&username.trim().chars().count()) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "用户名长度必须为 1 到 64 个字符".to_owned(),
+        ))
+    }
+}
+
+fn validate_new_password(password: &str) -> Result<(), AppError> {
+    if (8..=72).contains(&password.chars().count()) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "新密码长度必须为 8 到 72 个字符".to_owned(),
+        ))
+    }
+}
+
 async fn find_user_by_username(
     state: &AppState,
     username: &str,
 ) -> Result<Option<UserRecord>, AppError> {
     sqlx::query_as::<_, UserRecord>(
-        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?",
+        "SELECT id, username, password_hash, must_change_password, created_at, updated_at FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(&state.pool)
@@ -247,7 +408,7 @@ async fn find_user_by_username(
 
 async fn find_user_by_id(state: &AppState, id: Uuid) -> Result<Option<UserRecord>, AppError> {
     sqlx::query_as::<_, UserRecord>(
-        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id = ?",
+        "SELECT id, username, password_hash, must_change_password, created_at, updated_at FROM users WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(&state.pool)

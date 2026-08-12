@@ -25,6 +25,8 @@ import { ApiError } from "@/lib/api";
 import { applyTags, getTrackFiles, previewTags, undoTags } from "@/lib/api/methods/library";
 import type { Operation, TagField, TagTransform } from "@/lib/api/types";
 import { OperationPreview } from "@/features/library/operation-preview";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 
 type BatchMode = "set" | "find" | "regex" | "simplify" | "punctuation" | "filename" | "trim";
 
@@ -39,6 +41,7 @@ export function BatchTagDialog({
   onOpenChange: (open: boolean) => void;
   onChanged: () => Promise<void>;
 }) {
+  const { latestJob } = useJobActivity();
   const [mediaIds, setMediaIds] = useState<string[]>([]);
   const [mode, setMode] = useState<BatchMode>("set");
   const [field, setField] = useState<TagField>("artists");
@@ -139,7 +142,7 @@ export function BatchTagDialog({
           <DialogTitle>批量 Tag 编辑</DialogTitle>
           <DialogDescription>
             已选择 {trackIds.length} 首逻辑曲目、{mediaIds.length} 个可写物理文件。先生成
-            Diff，再确认写入。
+            变更预览，再确认写入。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -204,6 +207,9 @@ export function BatchTagDialog({
           ) : null}
         </div>
         <OperationPreview operation={operation} />
+        <InlineJobStatus
+          job={operation ? latestJob("operation", operation.id, "tag_edit") : undefined}
+        />
         <DialogFooter className="gap-2">
           {operation?.status === "completed" ? (
             <Button variant="outline" onClick={() => void undo()} disabled={busy}>
@@ -216,7 +222,7 @@ export function BatchTagDialog({
             disabled={busy || !mediaIds.length || (needsValue && !value)}
           >
             <WandSparkles data-icon="inline-start" />
-            预览 Diff
+            预览变更
           </Button>
           {operation?.status === "previewed" ? (
             <Button onClick={() => void apply()} disabled={busy}>

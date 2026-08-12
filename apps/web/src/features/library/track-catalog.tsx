@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -125,9 +125,6 @@ export function TrackCatalog(props: TrackCatalogProps) {
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
           <div>
             <CardTitle>逻辑曲目</CardTitle>
-            <CardDescription>
-              Table 用于批量管理；Album Grid 以专辑为单位浏览当前分页结果。
-            </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <ToggleGroup
@@ -139,11 +136,11 @@ export function TrackCatalog(props: TrackCatalogProps) {
             >
               <ToggleGroupItem value="table" aria-label="表格视图">
                 <List />
-                Table
+                表格
               </ToggleGroupItem>
               <ToggleGroupItem value="albums" aria-label="专辑网格视图">
                 <Grid2X2 />
-                Albums
+                专辑
               </ToggleGroupItem>
             </ToggleGroup>
             {view === "table" ? (

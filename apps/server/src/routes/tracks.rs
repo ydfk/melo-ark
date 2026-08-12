@@ -80,7 +80,7 @@ pub struct TrackDetailResponse {
 pub struct MediaFileResponse {
     pub id: Uuid,
     pub library_id: Uuid,
-    pub library_name: String,
+    pub library_path: String,
     pub path: String,
     pub extension: String,
     pub file_size: i64,
@@ -152,7 +152,7 @@ pub async fn files(
 ) -> Result<Json<Vec<MediaFileResponse>>, AppError> {
     require_user_id(&headers, &state)?;
     let files = sqlx::query_as::<_, MediaFileResponse>(
-        r#"SELECT mf.id, mf.library_id, l.name AS library_name,
+        r#"SELECT mf.id, mf.library_id, l.path AS library_path,
           l.path || '/' || mf.relative_path AS path, mf.extension, mf.file_size,
           mf.device_id, mf.inode, mf.hardlink_count, mf.codec, mf.duration_ms,
           mf.bitrate, mf.sample_rate, mf.bit_depth, mf.has_artwork, mf.metadata_writable,

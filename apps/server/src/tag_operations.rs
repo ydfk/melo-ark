@@ -452,7 +452,7 @@ async fn apply_one(
 ) -> Result<(), AppError> {
     if !target.writable || !metadata_extension_writable(path) {
         return Err(AppError::BadRequest(
-            "Library Root 或该格式未声明可写，拒绝修改 Tag".to_owned(),
+            "曲库或该格式未允许写入，拒绝修改标签".to_owned(),
         ));
     }
     sqlx::query(
@@ -585,7 +585,7 @@ fn safe_media_path(target: &MediaTarget) -> Result<PathBuf, AppError> {
         .map_err(|error| AppError::BadRequest(format!("媒体文件不可访问：{error}")))?;
     if !canonical.starts_with(&root) {
         return Err(AppError::BadRequest(
-            "媒体文件路径逃逸 Library Root，拒绝操作".to_owned(),
+            "媒体文件路径超出曲库范围，拒绝操作".to_owned(),
         ));
     }
     Ok(canonical)

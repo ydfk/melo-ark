@@ -15,6 +15,7 @@ pub mod organizer;
 pub mod playback;
 pub mod providers;
 pub mod routes;
+pub mod runtime_settings;
 pub mod scanner;
 pub mod scraper;
 pub mod state;
@@ -35,8 +36,18 @@ use crate::{config::AppConfig, state::AppState};
 
 pub async fn build_app(config: &AppConfig) -> anyhow::Result<Router> {
     let pool = db::connect(&config.database.path).await?;
+    if config.app.environment != "test" && auth::ensure_default_admin(&pool, &config.jwt).await? {
+        tracing::warn!(
+            username = "admin",
+            password = "admin",
+            "已创建默认管理员，请登录后立即修改密码"
+        );
+    }
     text_normalization::ensure_search_index(&pool).await?;
     jobs::recover_interrupted(&pool).await?;
+    jobs::cleanup_expired_logs(&pool).await?;
+    let environment_locks = runtime_settings::detect_environment_locks();
+    let runtime = runtime_settings::load(&pool, config, &environment_locks).await?;
     let (events, _) = tokio::sync::broadcast::channel(256);
     let scan_workers = config.scan.io_workers;
     let state = AppState {
@@ -47,6 +58,9 @@ pub async fn build_app(config: &AppConfig) -> anyhow::Result<Router> {
         analysis: config.analysis.clone(),
         ai: config.ai.clone(),
         playback: config.playback.clone(),
+        runtime: std::sync::Arc::new(tokio::sync::RwLock::new(runtime)),
+        environment_locks: std::sync::Arc::new(environment_locks),
+        app_config: std::sync::Arc::new(config.clone()),
         http: reqwest::Client::builder()
             .user_agent(&config.providers.user_agent)
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -68,6 +82,15 @@ pub async fn build_app(config: &AppConfig) -> anyhow::Result<Router> {
         )),
     };
     scanner::start_background_services(state.clone());
+    let cleanup_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+            if let Err(error) = jobs::cleanup_expired_logs(&cleanup_state.pool).await {
+                tracing::warn!(%error, "清理过期任务日志失败");
+            }
+        }
+    });
 
     let mut app = routes::router(state)
         .layer(TraceLayer::new_for_http().make_span_with(

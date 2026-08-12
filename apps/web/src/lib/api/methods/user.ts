@@ -4,6 +4,8 @@ import type {
   HealthResponse,
   SetupStatusResponse,
   TokenResponse,
+  UpdateProfileRequest,
+  UpdateProfileResponse,
   UserResponse,
 } from "../types";
 
@@ -22,3 +24,6 @@ export const login = (credentials: Credentials) =>
   });
 
 export const getProfile = () => alovaInstance.Get<UserResponse>("/auth/profile");
+
+export const updateProfile = (request: UpdateProfileRequest) =>
+  alovaInstance.Patch<UpdateProfileResponse>("/auth/profile", request);

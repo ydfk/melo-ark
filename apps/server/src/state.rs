@@ -1,9 +1,12 @@
+use std::{collections::BTreeSet, sync::Arc};
+
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Semaphore, broadcast};
 
 use crate::{
     config::{AiConfig, AnalysisConfig, JwtConfig, PlaybackConfig, ProviderConfig, ScanConfig},
     jobs::JobEvent,
+    runtime_settings::SharedRuntimeSettings,
 };
 
 #[derive(Clone)]
@@ -15,6 +18,9 @@ pub struct AppState {
     pub analysis: AnalysisConfig,
     pub ai: AiConfig,
     pub playback: PlaybackConfig,
+    pub runtime: SharedRuntimeSettings,
+    pub environment_locks: Arc<BTreeSet<String>>,
+    pub app_config: Arc<crate::config::AppConfig>,
     pub http: reqwest::Client,
     pub provider_last_request:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
@@ -25,4 +31,4 @@ pub struct AppState {
     pub transcode_semaphore: Arc<Semaphore>,
     pub login_failures: Arc<Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>>,
 }
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::atomic::AtomicU64;

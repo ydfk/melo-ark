@@ -59,6 +59,8 @@ pub struct LyricsFailure {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyLyricsRequest {
+    #[serde(default)]
+    pub job_id: Option<Uuid>,
     pub lyrics_id: Uuid,
     pub media_file_id: Uuid,
     pub mode: LyricsWriteMode,
@@ -335,9 +337,23 @@ pub async fn apply(
     if request.confirmation != "USE_LYRICS" {
         return Err(AppError::BadRequest("需要显式确认 USE_LYRICS".to_owned()));
     }
-    let job_id = Uuid::new_v4();
+    let job_id = request.job_id.unwrap_or_else(Uuid::new_v4);
     let item_key = request.media_file_id.to_string();
-    let item_id = crate::jobs::start_single_item_job(state, job_id, "lyrics", &item_key).await?;
+    let track_id: Uuid = sqlx::query_scalar("SELECT track_id FROM lyrics WHERE id = ?")
+        .bind(request.lyrics_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::NotFound("歌词候选不存在".to_owned()))?;
+    let item_id = crate::jobs::start_single_item_job(
+        state,
+        job_id,
+        "lyrics",
+        &item_key,
+        "track",
+        &track_id.to_string(),
+    )
+    .await?;
     let request_json = serde_json::to_string(&request).map_err(AppError::internal)?;
     if let Err(error) =
         sqlx::query("INSERT INTO lyrics_jobs (job_id, request_json, created_at) VALUES (?, ?, ?)")
@@ -366,7 +382,20 @@ pub async fn retry_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
     let request: ApplyLyricsRequest =
         serde_json::from_str(&request_json).map_err(AppError::internal)?;
     let item_key = request.media_file_id.to_string();
-    let item_id = crate::jobs::start_single_item_job(state, id, "lyrics", &item_key).await?;
+    let track_id: Uuid = sqlx::query_scalar("SELECT track_id FROM lyrics WHERE id = ?")
+        .bind(request.lyrics_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+    let item_id = crate::jobs::start_single_item_job(
+        state,
+        id,
+        "lyrics",
+        &item_key,
+        "track",
+        &track_id.to_string(),
+    )
+    .await?;
     run_apply_job(state, id, item_id, request).await?;
     Ok(())
 }
@@ -405,7 +434,7 @@ async fn apply_confirmed(
         return Err(AppError::BadRequest("歌词候选与目标曲目不匹配".to_owned()));
     }
     if !media.writable {
-        return Err(AppError::BadRequest("Library Root 未允许写入".to_owned()));
+        return Err(AppError::BadRequest("曲库未允许写入".to_owned()));
     }
     let path = safe_path(&media)?;
     let external_path = path.with_extension("lrc");
@@ -519,7 +548,7 @@ fn safe_path(media: &MediaPath) -> Result<PathBuf, AppError> {
         .canonicalize()
         .map_err(AppError::internal)?;
     if !path.starts_with(root) {
-        return Err(AppError::BadRequest("媒体路径逃逸 Library Root".to_owned()));
+        return Err(AppError::BadRequest("媒体路径超出曲库范围".to_owned()));
     }
     Ok(path)
 }

@@ -30,14 +30,19 @@ pub fn first<'a>(params: &'a Params, key: &str) -> Option<&'a str> {
 pub async fn authenticate(state: &AppState, params: &Params) -> Result<Uuid, AppError> {
     let username = first(params, "u")
         .ok_or_else(|| AppError::Unauthorized("OpenSubsonic 缺少用户名".to_owned()))?;
-    let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
-        "SELECT id, subsonic_secret FROM users WHERE username = ?",
+    let row = sqlx::query_as::<_, (Uuid, Option<String>, bool)>(
+        "SELECT id, subsonic_secret, must_change_password FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(&state.pool)
     .await
     .map_err(AppError::internal)?
     .ok_or_else(|| AppError::Unauthorized("OpenSubsonic 认证失败".to_owned()))?;
+    if row.2 {
+        return Err(AppError::Unauthorized(
+            "请先在 MeloArk 网页中修改默认密码".to_owned(),
+        ));
+    }
     let encrypted = row
         .1
         .ok_or_else(|| AppError::Unauthorized("该账号需要重新设置 OpenSubsonic 凭据".to_owned()))?;

@@ -30,7 +30,7 @@ type ProviderDraft = {
   rateLimitMs: string;
 };
 
-export function ProviderPanel() {
+export function ProviderPanel({ embedded = false }: { embedded?: boolean }) {
   const [items, setItems] = useState<ProviderSetting[]>([]);
   const [busyId, setBusyId] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -42,7 +42,7 @@ export function ProviderPanel() {
       setItems(await getProviders().send());
       setLoadError(undefined);
     } catch (error) {
-      const message = error instanceof ApiError ? error.problem.detail : "无法读取 Provider 状态";
+      const message = error instanceof ApiError ? error.problem.detail : "无法读取在线数据源状态";
       setLoadError(message);
       showError(error);
     } finally {
@@ -104,28 +104,33 @@ export function ProviderPanel() {
     <div className="space-y-5">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-display text-2xl font-semibold">Provider 舱</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            每个数据源独立缓存、限流和熔断，单点故障不会阻塞其他来源。
-          </p>
+          <h2
+            className={embedded ? "text-lg font-semibold" : "font-display text-2xl font-semibold"}
+          >
+            在线数据源
+          </h2>
+          {!embedded ? (
+            <p className="mt-1 text-sm text-muted-foreground">管理元数据与歌词来源。</p>
+          ) : null}
         </div>
         <Button variant="outline" size="sm" onClick={() => void refresh()}>
           <RefreshCw data-icon="inline-start" />
           刷新健康状态
         </Button>
       </div>
-      <Alert>
-        <CircleAlert />
-        <AlertTitle>中文 Provider 的接口稳定性说明</AlertTitle>
-        <AlertDescription>
-          QQ、网易与酷狗使用隔离适配器并有固定契约测试，但其公开网页接口可能变化；Kuwo、Migu 和外部
-          LrcApi 默认关闭并标记 Beta。MusicBrainz 遵循官方 1 req/s 限制。
-        </AlertDescription>
-      </Alert>
+      {!embedded ? (
+        <Alert>
+          <CircleAlert />
+          <AlertTitle>数据源稳定性</AlertTitle>
+          <AlertDescription>
+            部分公开接口可能发生变化，异常时会自动重试并临时熔断。
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {loadError ? (
         <Alert variant="destructive">
           <CircleAlert />
-          <AlertTitle>Provider 状态不可用</AlertTitle>
+          <AlertTitle>在线数据源不可用</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             <span>{loadError}。本地曲库、标签和播放功能不受影响。</span>
             <Button variant="outline" size="sm" onClick={() => void refresh()}>
@@ -145,7 +150,12 @@ export function ProviderPanel() {
                     {item.displayName}
                   </CardTitle>
                   <CardDescription className="mt-1">
-                    优先级 {item.priority} · {item.kind}
+                    优先级 {item.priority} ·{" "}
+                    {item.kind === "lyrics"
+                      ? "歌词"
+                      : item.kind === "metadata"
+                        ? "元数据"
+                        : "元数据与歌词"}
                   </CardDescription>
                 </div>
                 <Switch
@@ -158,7 +168,7 @@ export function ProviderPanel() {
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 <Badge variant={item.maturity === "stable" ? "secondary" : "outline"}>
-                  {item.maturity === "stable" ? "Stable" : "Beta"}
+                  {item.maturity === "stable" ? "稳定" : "测试中"}
                 </Badge>
                 {item.consecutiveFailures ? (
                   <Badge variant="destructive">连续失败 {item.consecutiveFailures}</Badge>
@@ -168,10 +178,10 @@ export function ProviderPanel() {
                 {item.circuitOpenUntil ? <Badge variant="destructive">熔断中</Badge> : null}
               </div>
               <p className="truncate text-xs text-muted-foreground">
-                {item.baseUrl ?? "尚未配置 endpoint"}
+                {item.baseUrl ?? "尚未配置服务地址"}
               </p>
               <p className="text-xs text-muted-foreground">
-                Timeout {item.timeoutMs} ms · 请求间隔 {item.rateLimitMs} ms
+                超时 {item.timeoutMs} ms · 请求间隔 {item.rateLimitMs} ms
               </p>
               {item.lastError ? (
                 <p className="line-clamp-2 text-xs text-destructive">{item.lastError}</p>
@@ -187,18 +197,14 @@ export function ProviderPanel() {
       {!loading && !loadError && !items.length ? (
         <Alert>
           <CloudCog />
-          <AlertTitle>没有可用的 Provider</AlertTitle>
-          <AlertDescription>检查服务配置后刷新；本地曲库管理仍可继续使用。</AlertDescription>
+          <AlertTitle>没有可用的在线数据源</AlertTitle>
         </Alert>
       ) : null}
       <Dialog open={Boolean(draft)} onOpenChange={(open) => !open && setDraft(undefined)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>配置 {draft?.displayName}</DialogTitle>
-            <DialogDescription>
-              修改
-              Endpoint、优先级、单次请求超时和请求间隔。网络错误会自动重试，连续失败会触发熔断。
-            </DialogDescription>
+            <DialogDescription>修改服务地址、优先级、请求超时和请求间隔。</DialogDescription>
           </DialogHeader>
           {draft ? (
             <form
@@ -209,7 +215,7 @@ export function ProviderPanel() {
               }}
             >
               <div className="grid gap-2">
-                <Label htmlFor="provider-base-url">Endpoint</Label>
+                <Label htmlFor="provider-base-url">服务地址</Label>
                 <Input
                   id="provider-base-url"
                   type="url"
@@ -236,7 +242,7 @@ export function ProviderPanel() {
                 />
                 <ProviderNumberField
                   id="provider-timeout"
-                  label="Timeout (ms)"
+                  label="超时（毫秒）"
                   min={100}
                   max={120000}
                   value={draft.timeoutMs}
@@ -301,5 +307,5 @@ function ProviderNumberField({
 }
 
 function showError(error: unknown) {
-  toast.error(error instanceof ApiError ? error.problem.detail : "无法读取 Provider 状态");
+  toast.error(error instanceof ApiError ? error.problem.detail : "无法读取在线数据源状态");
 }

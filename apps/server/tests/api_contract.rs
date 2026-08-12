@@ -47,6 +47,38 @@ async fn test_app() -> (Router, TempDir) {
     (build_app(&config).await.expect("build app"), temp_dir)
 }
 
+async fn initialized_app() -> (Router, TempDir) {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let config = AppConfig {
+        app: ServerConfig {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+            environment: "development".to_owned(),
+            web_dist: None,
+        },
+        jwt: JwtConfig {
+            secret: "test-secret-at-least-sixteen-characters".to_owned(),
+            expiration: 3600,
+        },
+        database: DatabaseConfig {
+            path: temp_dir
+                .path()
+                .join("initialized.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        },
+        logging: LoggingConfig {
+            filter: "off".to_owned(),
+        },
+        scan: ScanConfig::default(),
+        providers: ProviderConfig::default(),
+        analysis: AnalysisConfig::default(),
+        ai: AiConfig::default(),
+        playback: PlaybackConfig::default(),
+    };
+    (build_app(&config).await.expect("build app"), temp_dir)
+}
+
 async fn request(
     app: &Router,
     method: &str,
@@ -102,6 +134,9 @@ async fn health_and_openapi_follow_the_contract() {
         "/api/auth/setup",
         "/api/auth/login",
         "/api/auth/profile",
+        "/api/filesystem/directories",
+        "/api/settings",
+        "/api/jobs/{id}/logs",
         "/api/tracks/{id}",
         "/api/tracks/{id}/files",
         "/api/tracks/{id}/operations",
@@ -137,6 +172,67 @@ async fn health_and_openapi_follow_the_contract() {
 
     let (status, _) = request(&app, "GET", "/docs/", None, None).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn default_admin_must_change_password_before_using_the_service() {
+    let (app, _temp_dir) = initialized_app().await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/api/auth/login",
+        Some(json!({"username": "admin", "password": "admin"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let login: Value = serde_json::from_str(&body).expect("login json");
+    assert_eq!(login["passwordChangeRequired"], true);
+    let limited_token = login["token"].as_str().expect("limited token");
+
+    let (status, _) = request(&app, "GET", "/api/settings", None, Some(limited_token)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body) = request(
+        &app,
+        "PATCH",
+        "/api/auth/profile",
+        Some(json!({"newPassword": "changed-admin-password"})),
+        Some(limited_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: Value = serde_json::from_str(&body).expect("updated profile json");
+    assert_eq!(updated["user"]["passwordChangeRequired"], false);
+    let token = updated["token"].as_str().expect("full token");
+
+    let (status, body) = request(&app, "GET", "/api/settings", None, Some(token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut settings: Value = serde_json::from_str(&body).expect("settings json");
+    settings["values"]["watchDebounceSec"] = json!(7);
+    let (status, body) = request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        Some(json!({"values": settings["values"]})),
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let saved: Value = serde_json::from_str(&body).expect("saved settings json");
+    assert_eq!(saved["values"]["watchDebounceSec"], 7);
+
+    let (status, body) = request(
+        &app,
+        "GET",
+        "/api/filesystem/directories?path=%2F",
+        None,
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let listing: Value = serde_json::from_str(&body).expect("directory listing json");
+    assert_eq!(listing["currentPath"], "/");
 }
 
 #[tokio::test]

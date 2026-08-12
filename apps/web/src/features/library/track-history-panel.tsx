@@ -108,7 +108,7 @@ export function TrackHistoryPanel({ trackId }: { trackId: string }) {
 function operationLabel(kind: string, action: string) {
   const kindLabels: Record<string, string> = {
     tag_edit: "Tag 写入",
-    organize: "Hardlink 整理",
+    organize: "硬链接整理",
     trash: "回收站",
   };
   return `${kindLabels[kind] ?? kind} · ${action}`;

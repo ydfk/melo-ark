@@ -26,6 +26,10 @@ export function clearAccessToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+export function setAccessToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
 export function apiBaseURL() {
   const origin = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, "");
   return origin ? `${origin}/api` : "/api";

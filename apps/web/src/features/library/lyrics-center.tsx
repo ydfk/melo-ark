@@ -16,6 +16,8 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { applyLyrics, getLyrics, searchLyrics } from "@/lib/api/methods/library";
 import type { LyricsRecord, MediaFile } from "@/lib/api/types";
 
@@ -28,6 +30,7 @@ export function LyricsCenter({
   files: MediaFile[];
   onChanged: () => Promise<void>;
 }) {
+  const { latestJob } = useJobActivity();
   const [items, setItems] = useState<LyricsRecord[]>([]);
   const [selected, setSelected] = useState<LyricsRecord>();
   const [mediaId, setMediaId] = useState(files[0]?.id ?? "");
@@ -66,7 +69,9 @@ export function LyricsCenter({
     if (!selected || !mediaId) return;
     setBusy(true);
     try {
+      const jobId = crypto.randomUUID();
       const saved = await applyLyrics({
+        jobId,
         lyricsId: selected.id,
         mediaFileId: mediaId,
         mode,
@@ -167,6 +172,7 @@ export function LyricsCenter({
           按策略写入
         </Button>
       </div>
+      <InlineJobStatus job={latestJob("track", trackId, "lyrics")} />
     </div>
   );
 }

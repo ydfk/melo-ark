@@ -151,7 +151,7 @@ pub async fn update_provider(
         .is_some_and(|value| !(0..=10_000).contains(&value))
     {
         return Err(AppError::BadRequest(
-            "Provider 优先级必须在 0 到 10000 之间".to_owned(),
+            "数据源优先级必须在 0 到 10000 之间".to_owned(),
         ));
     }
     if request
@@ -159,7 +159,7 @@ pub async fn update_provider(
         .is_some_and(|value| !(100..=120_000).contains(&value))
     {
         return Err(AppError::BadRequest(
-            "Provider timeout 必须在 100 到 120000 ms 之间".to_owned(),
+            "数据源超时必须在 100 到 120000 毫秒之间".to_owned(),
         ));
     }
     if request
@@ -167,7 +167,7 @@ pub async fn update_provider(
         .is_some_and(|value| !(0..=60_000).contains(&value))
     {
         return Err(AppError::BadRequest(
-            "Provider 限流间隔必须在 0 到 60000 ms 之间".to_owned(),
+            "数据源请求间隔必须在 0 到 60000 毫秒之间".to_owned(),
         ));
     }
     let affected = sqlx::query(
@@ -188,13 +188,13 @@ pub async fn update_provider(
     .map_err(AppError::internal)?
     .rows_affected();
     if affected == 0 {
-        return Err(AppError::NotFound("Provider 不存在".to_owned()));
+        return Err(AppError::NotFound("在线数据源不存在".to_owned()));
     }
     let mut items = list_providers(state).await?;
     items
         .drain(..)
         .find(|item| item.provider_id == id)
-        .ok_or_else(|| AppError::NotFound("Provider 不存在".to_owned()))
+        .ok_or_else(|| AppError::NotFound("在线数据源不存在".to_owned()))
 }
 
 pub async fn search(
@@ -221,7 +221,7 @@ pub async fn search(
             failures.push(ProviderFailure {
                 provider_id: provider.id().to_owned(),
                 code: "not_configured".to_owned(),
-                message: "Provider 未配置 base URL".to_owned(),
+                message: "数据源未配置服务地址".to_owned(),
             });
             continue;
         };
@@ -232,7 +232,7 @@ pub async fn search(
             failures.push(ProviderFailure {
                 provider_id: provider.id().to_owned(),
                 code: "circuit_open".to_owned(),
-                message: "Provider 熔断冷却中".to_owned(),
+                message: "数据源正在熔断冷却".to_owned(),
             });
             continue;
         }
@@ -273,7 +273,7 @@ pub async fn create_batch_job(
     let id = Uuid::new_v4();
     let now = Utc::now();
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
-    sqlx::query("INSERT INTO jobs (id, kind, status, total_items, created_at, updated_at) VALUES (?, 'scrape', 'queued', ?, ?, ?)")
+    sqlx::query("INSERT INTO jobs (id, kind, status, source_type, source_id, total_items, created_at, updated_at) VALUES (?, 'scrape', 'queued', 'workspace', 'library', ?, ?, ?)")
         .bind(id)
         .bind(i64::try_from(request.track_ids.len()).unwrap_or(i64::MAX))
         .bind(now)
@@ -300,6 +300,16 @@ pub async fn create_batch_job(
     }
     transaction.commit().await.map_err(AppError::internal)?;
     let job = crate::jobs::fetch_job(&state.pool, id).await?;
+    crate::jobs::record_log(
+        state,
+        id,
+        "info",
+        "queued",
+        None,
+        None,
+        "元数据匹配任务已加入队列",
+    )
+    .await?;
     crate::jobs::emit(state, job.clone());
     spawn_batch_job(state.clone(), id);
     Ok(job)
@@ -316,6 +326,16 @@ pub fn spawn_batch_job(state: AppState, id: Uuid) {
                 .execute(&state.pool)
                 .await;
             if let Ok(job) = crate::jobs::fetch_job(&state.pool, id).await {
+                let _ = crate::jobs::record_log(
+                    &state,
+                    id,
+                    "error",
+                    "failed",
+                    None,
+                    None,
+                    &error.to_string(),
+                )
+                .await;
                 crate::jobs::emit(&state, job);
             }
         }
@@ -325,6 +345,16 @@ pub fn spawn_batch_job(state: AppState, id: Uuid) {
 async fn run_batch_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
     sqlx::query("UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), finished_at = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'interrupted')")
         .bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
+    crate::jobs::record_log(
+        state,
+        id,
+        "info",
+        "started",
+        None,
+        None,
+        "元数据匹配任务开始执行",
+    )
+    .await?;
     let provider_ids_json: String =
         sqlx::query_scalar("SELECT provider_ids_json FROM scrape_jobs WHERE job_id = ?")
             .bind(id)
@@ -347,6 +377,16 @@ async fn run_batch_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
                 "cancel_requested" => {
                     sqlx::query("UPDATE jobs SET status = 'cancelled', finished_at = ?, updated_at = ? WHERE id = ?")
                         .bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
+                    crate::jobs::record_log(
+                        state,
+                        id,
+                        "warn",
+                        "cancelled",
+                        None,
+                        None,
+                        "元数据匹配任务已取消",
+                    )
+                    .await?;
                     crate::jobs::emit(state, crate::jobs::fetch_job(&state.pool, id).await?);
                     return Ok(());
                 }
@@ -355,6 +395,21 @@ async fn run_batch_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
         }
         sqlx::query("UPDATE job_items SET status = 'running', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?")
             .bind(Utc::now()).bind(item_id).execute(&state.pool).await.map_err(AppError::internal)?;
+        let attempt: i64 = sqlx::query_scalar("SELECT attempt_count FROM job_items WHERE id = ?")
+            .bind(item_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
+        crate::jobs::record_log(
+            state,
+            id,
+            "info",
+            "item_started",
+            Some(&item_key),
+            Some(attempt),
+            "开始匹配元数据",
+        )
+        .await?;
         let result = match Uuid::parse_str(&item_key) {
             Ok(track_id) => search(
                 state,
@@ -373,8 +428,19 @@ async fn run_batch_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
             Err(error) => ("failed", Some(error.to_string()), true),
         };
         sqlx::query("UPDATE job_items SET status = ?, message = ?, retryable = ?, updated_at = ? WHERE id = ?")
-            .bind(status).bind(message).bind(retryable).bind(Utc::now()).bind(item_id)
+            .bind(status).bind(&message).bind(retryable).bind(Utc::now()).bind(item_id)
             .execute(&state.pool).await.map_err(AppError::internal)?;
+        let level = if status == "failed" { "error" } else { "info" };
+        crate::jobs::record_log(
+            state,
+            id,
+            level,
+            status,
+            Some(&item_key),
+            Some(attempt),
+            message.as_deref().unwrap_or("处理成功"),
+        )
+        .await?;
         sqlx::query(r#"UPDATE jobs SET current_item = ?, processed_items = (SELECT COUNT(*) FROM job_items WHERE job_id = ? AND status IN ('success','skipped','failed')),
           success_items = (SELECT COUNT(*) FROM job_items WHERE job_id = ? AND status = 'success'), failed_items = (SELECT COUNT(*) FROM job_items WHERE job_id = ? AND status = 'failed'), updated_at = ? WHERE id = ?"#)
             .bind(&item_key).bind(id).bind(id).bind(id).bind(Utc::now()).bind(id)
@@ -395,6 +461,16 @@ async fn run_batch_job(state: &AppState, id: Uuid) -> Result<(), AppError> {
     sqlx::query("UPDATE jobs SET status = ?, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?")
         .bind(status).bind(Utc::now()).bind(Utc::now()).bind(id).execute(&state.pool).await.map_err(AppError::internal)?;
     crate::jobs::emit(state, crate::jobs::fetch_job(&state.pool, id).await?);
+    crate::jobs::record_log(
+        state,
+        id,
+        "info",
+        status,
+        None,
+        None,
+        "元数据匹配任务处理完成",
+    )
+    .await?;
     Ok(())
 }
 
@@ -434,12 +510,13 @@ async fn cached_or_search(
         return Ok(items);
     }
     let timeout = Duration::from_millis(setting.timeout_ms.clamp(100, 120_000) as u64);
+    let policy = state.runtime.read().await.editable.clone();
     let mut attempt = 0_usize;
     let items = loop {
         wait_for_rate_slot(state, provider.id(), setting.rate_limit_ms).await;
         match provider.search_track(state, base_url, query, timeout).await {
             Ok(items) => break items,
-            Err(error) if error.is_retryable() && attempt < state.providers.retry_attempts => {
+            Err(error) if error.is_retryable() && attempt < policy.source_retry_attempts => {
                 let delay_ms = 200 * (1_u64 << attempt.min(4));
                 attempt += 1;
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
@@ -456,7 +533,7 @@ async fn cached_or_search(
     .bind(cache_key)
     .bind(provider.id())
     .bind(serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_owned()))
-    .bind(now + chrono::Duration::seconds(state.providers.cache_ttl_sec))
+    .bind(now + chrono::Duration::seconds(policy.source_cache_ttl_sec))
     .bind(now)
     .execute(&state.pool)
     .await;
@@ -485,13 +562,14 @@ async fn record_failure(
     provider_id: &str,
     message: &str,
 ) -> Result<(), AppError> {
+    let policy = state.runtime.read().await.editable.clone();
     sqlx::query(
         r#"UPDATE provider_settings SET consecutive_failures = consecutive_failures + 1,
         circuit_open_until = CASE WHEN consecutive_failures + 1 >= ? THEN ? ELSE circuit_open_until END,
         last_error = ?, updated_at = ? WHERE provider_id = ?"#,
     )
-    .bind(state.providers.circuit_breaker_failures)
-    .bind(Utc::now() + chrono::Duration::seconds(state.providers.circuit_breaker_cooldown_sec))
+    .bind(policy.source_circuit_breaker_failures)
+    .bind(Utc::now() + chrono::Duration::seconds(policy.source_circuit_breaker_cooldown_sec))
     .bind(message)
     .bind(Utc::now())
     .bind(provider_id)
@@ -764,7 +842,7 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
         Ok(())
     } else {
         Err(AppError::BadRequest(
-            "Provider URL 必须使用 HTTPS；测试环境仅允许 localhost HTTP".to_owned(),
+            "数据源地址必须使用 HTTPS；测试环境仅允许 localhost HTTP".to_owned(),
         ))
     }
 }

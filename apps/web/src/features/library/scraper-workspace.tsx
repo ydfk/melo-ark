@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { OperationPreview } from "@/features/library/operation-preview";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
 import {
   applyTags,
@@ -26,6 +28,7 @@ export function ScraperWorkspace({
   trackId: string;
   onChanged: () => Promise<void>;
 }) {
+  const { latestJob } = useJobActivity();
   const [candidates, setCandidates] = useState<ScrapeCandidate[]>([]);
   const [failures, setFailures] = useState<Array<{ providerId: string; message: string }>>([]);
   const [operation, setOperation] = useState<Operation>();
@@ -62,7 +65,7 @@ export function ScraperWorkspace({
           includeArtwork && Boolean(candidate.artworkUrl)
         ).send()
       );
-      toast.success("已生成 Tag Diff，尚未写入文件");
+      toast.success("已生成标签变更预览，尚未写入文件");
     } catch (error) {
       showError(error);
     } finally {
@@ -103,13 +106,13 @@ export function ScraperWorkspace({
         </label>
         <Button variant="outline" onClick={() => void searchAll()} disabled={busy}>
           {busy ? <Spinner data-icon="inline-start" /> : <Search data-icon="inline-start" />}
-          搜索全部 Provider
+          搜索全部数据源
         </Button>
       </div>
       {failures.length ? (
         <Alert variant="destructive">
           <RefreshCw />
-          <AlertTitle>部分 Provider 已降级</AlertTitle>
+          <AlertTitle>部分数据源暂不可用</AlertTitle>
           <AlertDescription>
             {failures.map((item) => `${item.providerId}: ${item.message}`).join("；")}
           </AlertDescription>
@@ -172,17 +175,18 @@ export function ScraperWorkspace({
           </article>
         ))}
         {!candidates.length ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            尚无候选。点击搜索后，各 Provider 会独立返回结果或故障状态。
-          </p>
+          <p className="py-8 text-center text-sm text-muted-foreground">暂无匹配结果。</p>
         ) : null}
       </div>
       <OperationPreview operation={operation} />
+      <InlineJobStatus
+        job={operation ? latestJob("operation", operation.id, "tag_edit") : undefined}
+      />
       {operation?.status === "previewed" ? (
         <div className="flex justify-end">
           <Button onClick={() => void confirm()} disabled={busy}>
             <Check data-icon="inline-start" />
-            确认写入 Diff
+            确认写入
           </Button>
         </div>
       ) : null}

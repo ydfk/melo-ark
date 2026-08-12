@@ -183,13 +183,10 @@ impl AppConfig {
             self.providers.user_agent.contains('/'),
             "providers.user_agent 必须包含应用名与版本"
         );
-        anyhow::ensure!(
-            self.providers.cache_ttl_sec > 0,
-            "Provider 缓存时间必须大于 0"
-        );
+        anyhow::ensure!(self.providers.cache_ttl_sec > 0, "数据源缓存时间必须大于 0");
         anyhow::ensure!(
             self.providers.retry_attempts <= 5,
-            "Provider 重试次数不能大于 5"
+            "数据源重试次数不能大于 5"
         );
         anyhow::ensure!(self.analysis.workers > 0, "analysis.workers 必须大于 0");
         anyhow::ensure!(

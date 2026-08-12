@@ -87,7 +87,7 @@ pub async fn preview(
     let target_library = load_target_library(state, request.target_library_id).await?;
     if !target_library.writable || !matches!(target_library.role.as_str(), "managed" | "both") {
         return Err(AppError::BadRequest(
-            "整理目标必须是可写的 managed 或 both Library Root".to_owned(),
+            "整理目标必须是允许写入的已整理曲库".to_owned(),
         ));
     }
     let target_root = Path::new(&target_library.path)
@@ -405,7 +405,7 @@ async fn load_target_library(state: &AppState, id: Uuid) -> Result<TargetLibrary
         .fetch_optional(&state.pool)
         .await
         .map_err(AppError::internal)?
-        .ok_or_else(|| AppError::NotFound("整理目标 Library Root 不存在".to_owned()))
+        .ok_or_else(|| AppError::NotFound("整理目标曲库不存在".to_owned()))
 }
 
 async fn load_source(state: &AppState, id: Uuid) -> Result<OrganizerSource, AppError> {
@@ -435,9 +435,7 @@ fn safe_source_path(source: &OrganizerSource) -> Result<PathBuf, AppError> {
         .canonicalize()
         .map_err(AppError::internal)?;
     if !path.starts_with(root) {
-        return Err(AppError::BadRequest(
-            "整理源路径逃逸 Library Root".to_owned(),
-        ));
+        return Err(AppError::BadRequest("整理源路径超出曲库范围".to_owned()));
     }
     Ok(path)
 }
@@ -579,7 +577,7 @@ fn ensure_lexically_inside(root: &Path, target: &Path) -> Result<(), AppError> {
     if target.starts_with(root) {
         Ok(())
     } else {
-        Err(AppError::BadRequest("整理目标逃逸 Library Root".to_owned()))
+        Err(AppError::BadRequest("整理目标超出曲库范围".to_owned()))
     }
 }
 

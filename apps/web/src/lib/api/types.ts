@@ -16,12 +16,67 @@ export type SetupStatusResponse = {
 export type UserResponse = {
   id: string;
   username: string;
+  passwordChangeRequired: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
 export type TokenResponse = {
   token: string;
+  passwordChangeRequired: boolean;
+};
+
+export type UpdateProfileRequest = {
+  username?: string;
+  currentPassword?: string;
+  newPassword?: string;
+};
+
+export type UpdateProfileResponse = {
+  user: UserResponse;
+  token: string;
+};
+
+export type DirectoryListing = {
+  currentPath: string;
+  parentPath?: string;
+  directories: Array<{ name: string; path: string; readable: boolean }>;
+};
+
+export type EditableSettings = {
+  scanWorkers: number;
+  reconcileIntervalSec: number;
+  watchDebounceSec: number;
+  sourceCacheTtlSec: number;
+  sourceRetryAttempts: number;
+  sourceCircuitBreakerFailures: number;
+  sourceCircuitBreakerCooldownSec: number;
+  analysisWorkers: number;
+  fingerprintThreshold: number;
+  aiEnabled: boolean;
+  aiBaseUrl: string;
+  aiModel: string;
+  aiTimeoutSec: number;
+  transcodeWorkers: number;
+  transcodeCacheMaxBytes: number;
+  organizerTemplate: string;
+  organizerCrossPlatformSafe: boolean;
+};
+
+export type RuntimeSettings = {
+  values: EditableSettings;
+  aiApiKeyConfigured: boolean;
+  lockedByEnvironment: string[];
+  restartRequiredFields: string[];
+  infrastructure: {
+    host: string;
+    port: number;
+    databasePath: string;
+    ffmpegPath: string;
+    fpcalcPath: string;
+    transcodeCacheDir: string;
+    platform: string;
+  };
 };
 
 export type Problem = {
@@ -70,7 +125,6 @@ export type DashboardStats = {
 
 export type LibraryRoot = {
   id: string;
-  name: string;
   path: string;
   scanEnabled: boolean;
   watchEnabled: boolean;
@@ -83,7 +137,6 @@ export type LibraryRoot = {
 };
 
 export type CreateLibraryRequest = {
-  name: string;
   path: string;
   scanEnabled: boolean;
   watchEnabled: boolean;
@@ -119,6 +172,8 @@ export type Job = {
   kind: string;
   status: JobStatus;
   libraryId?: string;
+  sourceType?: string;
+  sourceId?: string;
   totalItems: number;
   processedItems: number;
   successItems: number;
@@ -134,10 +189,23 @@ export type Job = {
   etaSeconds?: number | null;
 };
 
-export type JobEvent = {
-  event: "job.updated";
-  job: Job;
+export type JobLog = {
+  id: number;
+  jobId: string;
+  level: "info" | "warn" | "error";
+  eventType: string;
+  itemKey?: string;
+  attempt?: number;
+  message: string;
+  createdAt: string;
 };
+
+export type JobLogPage = {
+  items: JobLog[];
+  nextBefore?: number;
+};
+
+export type JobEvent = { event: "job.updated"; job: Job } | { event: "job.log"; log: JobLog };
 
 export type Track = {
   id: string;
@@ -186,7 +254,7 @@ export type TrackDetail = {
 export type MediaFile = {
   id: string;
   libraryId: string;
-  libraryName: string;
+  libraryPath: string;
   path: string;
   extension: string;
   fileSize: number;

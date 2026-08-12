@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { clearAccessToken, getAccessToken } from "@/lib/api";
-import { getProfile, getSetupStatus } from "@/lib/api/methods/user";
+import { getProfile } from "@/lib/api/methods/user";
 import type { UserResponse } from "@/lib/api/types";
 import { AuthPage } from "@/pages/auth-page";
 import { DashboardPage } from "@/pages/dashboard";
+import { ForcePasswordPage } from "@/pages/force-password-page";
 
 type AppState =
   | { kind: "loading" }
-  | { kind: "auth"; setupRequired: boolean }
+  | { kind: "auth" }
+  | { kind: "force-password"; user: UserResponse }
   | { kind: "ready"; user: UserResponse };
 
 export default function App() {
@@ -17,17 +19,18 @@ export default function App() {
   const bootstrap = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const setupStatus = await getSetupStatus().send();
-      if (setupStatus.setupRequired || !getAccessToken()) {
-        setState({ kind: "auth", setupRequired: setupStatus.setupRequired });
+      if (!getAccessToken()) {
+        setState({ kind: "auth" });
         return;
       }
 
       const user = await getProfile().send();
-      setState({ kind: "ready", user });
+      setState(
+        user.passwordChangeRequired ? { kind: "force-password", user } : { kind: "ready", user }
+      );
     } catch {
       clearAccessToken();
-      setState({ kind: "auth", setupRequired: false });
+      setState({ kind: "auth" });
     }
   }, []);
 
@@ -47,15 +50,20 @@ export default function App() {
   }
 
   if (state.kind === "auth") {
-    return <AuthPage setupRequired={state.setupRequired} onAuthenticated={bootstrap} />;
+    return <AuthPage onAuthenticated={bootstrap} />;
+  }
+
+  if (state.kind === "force-password") {
+    return <ForcePasswordPage username={state.user.username} onChanged={bootstrap} />;
   }
 
   return (
     <DashboardPage
       user={state.user}
+      onUserChanged={(user) => setState({ kind: "ready", user })}
       onLogout={() => {
         clearAccessToken();
-        setState({ kind: "auth", setupRequired: false });
+        setState({ kind: "auth" });
       }}
     />
   );

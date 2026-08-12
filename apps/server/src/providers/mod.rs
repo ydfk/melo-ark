@@ -57,15 +57,15 @@ pub struct ArtworkCandidate {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
-    #[error("Provider 尚未配置")]
+    #[error("在线数据源尚未配置")]
     NotConfigured,
-    #[error("Provider 暂不支持此能力")]
+    #[error("在线数据源暂不支持此能力")]
     Unsupported,
-    #[error("Provider 请求超时")]
+    #[error("在线数据源请求超时")]
     Timeout,
-    #[error("Provider HTTP 错误：{0}")]
+    #[error("在线数据源请求错误：{0}")]
     Http(String),
-    #[error("Provider 响应格式已变化：{0}")]
+    #[error("在线数据源响应格式已变化：{0}")]
     InvalidResponse(String),
 }
 

@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, Problem},
-    jobs::{JobEvent, JobResponse, fetch_job, list_jobs, set_status},
+    jobs::{
+        JobEvent, JobLogPage, JobResponse, fetch_job, list_jobs, list_logs, record_log, set_status,
+    },
     organizer::OrganizerApplyRequest,
     scanner,
     state::AppState,
@@ -28,14 +30,64 @@ pub struct JobListQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct JobLogQuery {
+    pub before: Option<i64>,
+    pub limit: Option<i64>,
+    pub level: Option<String>,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/jobs", get(list))
         .route("/api/jobs/{id}", get(get_one))
+        .route("/api/jobs/{id}/logs", get(logs))
         .route("/api/jobs/{id}/pause", post(pause))
         .route("/api/jobs/{id}/resume", post(resume))
         .route("/api/jobs/{id}/cancel", post(cancel))
         .route("/api/jobs/{id}/retry-failed", post(retry_failed))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/jobs/{id}/logs",
+    tag = "jobs",
+    security(("bearerAuth" = [])),
+    params(
+        ("id" = Uuid, Path, description = "任务 ID"),
+        ("before" = Option<i64>, Query, description = "读取此日志 ID 之前的记录"),
+        ("limit" = Option<i64>, Query, description = "每页数量，最多 200"),
+        ("level" = Option<String>, Query, description = "info、warn 或 error")
+    ),
+    responses((status = 200, description = "任务日志", body = JobLogPage))
+)]
+pub async fn logs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Query(query): Query<JobLogQuery>,
+) -> Result<Json<JobLogPage>, AppError> {
+    require_user_id(&headers, &state)?;
+    fetch_job(&state.pool, id).await?;
+    if query
+        .level
+        .as_deref()
+        .is_some_and(|level| !matches!(level, "info" | "warn" | "error"))
+    {
+        return Err(AppError::BadRequest(
+            "日志级别只能是 info、warn 或 error".to_owned(),
+        ));
+    }
+    Ok(Json(
+        list_logs(
+            &state.pool,
+            id,
+            query.before,
+            query.limit.unwrap_or(200),
+            query.level.as_deref(),
+        )
+        .await?,
+    ))
 }
 
 #[utoipa::path(
@@ -210,6 +262,7 @@ pub async fn retry_failed(
             }
             _ => return Err(AppError::Conflict("未知任务类型不能自动重试".to_owned())),
         }
+        record_log(&state, id, "info", "retry", None, None, "失败项已重新执行").await?;
         return Ok(Json(fetch_job(&state.pool, id).await?));
     }
     let now = chrono::Utc::now();
@@ -232,6 +285,16 @@ pub async fn retry_failed(
     .map_err(AppError::internal)?;
     transaction.commit().await.map_err(AppError::internal)?;
     let job = fetch_job(&state.pool, id).await?;
+    record_log(
+        &state,
+        id,
+        "info",
+        "retry",
+        None,
+        None,
+        "失败项已重新加入队列",
+    )
+    .await?;
     scanner::spawn_job(state, id);
     Ok(Json(job))
 }

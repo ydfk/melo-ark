@@ -64,6 +64,16 @@ pub fn spawn_job(state: AppState, job_id: Uuid) {
             .bind(job_id)
             .execute(&state.pool)
             .await;
+            let _ = jobs::record_log(
+                &state,
+                job_id,
+                "error",
+                "failed",
+                None,
+                None,
+                &error.to_string(),
+            )
+            .await;
             emit_current(&state, job_id).await;
         }
     });
@@ -77,7 +87,7 @@ async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
     let job = jobs::fetch_job(&state.pool, job_id).await?;
     let library_id = job
         .library_id
-        .ok_or_else(|| AppError::NotFound("任务关联的 Library Root 已被删除".to_owned()))?;
+        .ok_or_else(|| AppError::NotFound("任务关联的曲库已被删除".to_owned()))?;
     let library = fetch_library(&state, library_id).await?;
     let (root, _) = preflight_path(&library.path)?;
     let excludes: Vec<String> = serde_json::from_str(&library.exclude_patterns).unwrap_or_default();
@@ -134,6 +144,16 @@ async fn acquire_scan_slot(
         .await
         .map_err(AppError::internal)?;
         if claimed.rows_affected() == 1 {
+            jobs::record_log(
+                state,
+                job_id,
+                "info",
+                "started",
+                None,
+                None,
+                "扫描任务开始执行",
+            )
+            .await?;
             return Ok(Some(permit));
         }
         drop(permit);
@@ -184,7 +204,7 @@ async fn process_job_path(
 ) -> Result<(), AppError> {
     let relative = path
         .strip_prefix(root)
-        .map_err(|_| AppError::BadRequest("扫描路径逃逸出 Library Root".to_owned()))?
+        .map_err(|_| AppError::BadRequest("扫描路径超出曲库范围".to_owned()))?
         .to_string_lossy()
         .into_owned();
     let prior_status: Option<String> =
@@ -217,7 +237,7 @@ async fn process_job_path(
                 job_id,
                 &relative,
                 "path_outside_library",
-                "文件解析后的真实路径位于 Library Root 外部",
+                "文件解析后的真实路径位于曲库外部",
                 false,
             )
             .await;
@@ -306,5 +326,15 @@ async fn finish_scan(state: &AppState, job_id: Uuid, library_id: Uuid) -> Result
         .await
         .map_err(AppError::internal)?;
     emit_current(state, job_id).await;
+    jobs::record_log(
+        state,
+        job_id,
+        "info",
+        status,
+        None,
+        None,
+        "扫描任务处理完成",
+    )
+    .await?;
     Ok(())
 }

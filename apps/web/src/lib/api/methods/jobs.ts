@@ -1,5 +1,5 @@
 import { alovaInstance } from "@/lib/api";
-import type { Job } from "@/lib/api/types";
+import type { Job, JobLogPage } from "@/lib/api/types";
 
 export const getJobs = () => alovaInstance.Get<Job[]>("/jobs", { params: { limit: 100 } });
 
@@ -10,3 +10,8 @@ export const resumeJob = (id: string) => alovaInstance.Post<Job>(`/jobs/${id}/re
 export const cancelJob = (id: string) => alovaInstance.Post<Job>(`/jobs/${id}/cancel`);
 
 export const retryFailedJob = (id: string) => alovaInstance.Post<Job>(`/jobs/${id}/retry-failed`);
+
+export const getJobLogs = (id: string, before?: number, level?: string) =>
+  alovaInstance.Get<JobLogPage>(`/jobs/${id}/logs`, {
+    params: { before, level, limit: 200 },
+  });

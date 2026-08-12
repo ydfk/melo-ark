@@ -31,5 +31,6 @@ describe("TasksPanel", () => {
 
     expect(screen.getByText("等待采样")).toBeInTheDocument();
     expect(screen.getByText("已完成", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看日志" })).toBeInTheDocument();
   });
 });

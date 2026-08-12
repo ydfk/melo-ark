@@ -17,12 +17,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { LibraryRootCard } from "@/features/library/library-root-card";
+import { DirectoryTreePicker } from "@/features/library/directory-tree-picker";
 import { TrackCatalog } from "@/features/library/track-catalog";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
 import {
   createLibrary,
@@ -35,8 +37,7 @@ import type { LibraryRoot, TrackFilter, TrackList } from "@/lib/api/types";
 import { usePlaybackStore, type QueueTrack } from "@/store/playback-store";
 
 const librarySchema = z.object({
-  name: z.string().trim().min(1, "请输入曲库名称").max(80, "名称最多 80 个字符"),
-  path: z.string().trim().startsWith("/", "请填写容器内绝对路径，例如 /music/source"),
+  path: z.string().trim().min(1, "请选择目录"),
   role: z.enum(["source", "managed", "both"]),
   watchEnabled: z.boolean(),
   writable: z.boolean(),
@@ -62,6 +63,7 @@ type LibraryPanelProps = {
 };
 
 export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelProps) {
+  const { latestJob, registerJob } = useJobActivity();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackList>();
   const [search, setSearch] = useState("");
@@ -75,8 +77,7 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
   const form = useForm<LibraryForm>({
     resolver: zodResolver(librarySchema),
     defaultValues: {
-      name: "",
-      path: "/music/source",
+      path: "",
       role: "source",
       watchEnabled: false,
       writable: false,
@@ -100,19 +101,19 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
         path: status.canonicalPath,
         scanEnabled: true,
       }).send();
-      toast.success("Library Root 已添加");
-      form.reset();
+      toast.success("曲库已添加");
+      form.reset({ path: "", role: "source", watchEnabled: false, writable: false });
       setDialogOpen(false);
       await onChanged();
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.problem.detail : "无法添加 Library Root");
+      toast.error(error instanceof ApiError ? error.problem.detail : "无法添加曲库");
     }
   });
 
   async function startScan(library: LibraryRoot) {
     try {
-      await scanLibrary(library.id).send();
-      toast.success(`已开始扫描「${library.name}」`);
+      registerJob(await scanLibrary(library.id).send());
+      toast.success(`已开始扫描「${library.path}」`);
       await onChanged();
     } catch (error) {
       toast.error(error instanceof ApiError ? error.problem.detail : "无法创建扫描任务");
@@ -121,12 +122,12 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
 
   async function startBatchScrape() {
     try {
-      await createScrapeJob([...selectedTrackIds]).send();
-      toast.success(`已创建 ${selectedTrackIds.size} 首曲目的批量刮削任务`);
+      registerJob(await createScrapeJob([...selectedTrackIds]).send());
+      toast.success(`已创建 ${selectedTrackIds.size} 首曲目的元数据匹配任务`);
       setSelectedTrackIds(new Set());
       await onChanged();
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.problem.detail : "无法创建批量刮削任务");
+      toast.error(error instanceof ApiError ? error.problem.detail : "无法创建元数据匹配任务");
     }
   }
 
@@ -148,11 +149,7 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
     <div className="flex flex-col gap-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Library Roots</p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">曲库与扫描</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            路径必须是 Docker 已挂载的容器内目录。基础扫描不会计算完整 Hash 或音频指纹。
-          </p>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">曲库</h1>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
@@ -163,35 +160,22 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>添加 Library Root</DialogTitle>
-              <DialogDescription>
-                填写容器内绝对路径。保存前会 canonicalize 并检查可读写状态。
-              </DialogDescription>
+              <DialogTitle>添加曲库</DialogTitle>
+              <DialogDescription>选择音乐目录并设置用途。</DialogDescription>
             </DialogHeader>
             <form id="library-form" onSubmit={submit}>
               <FieldGroup>
-                <Field data-invalid={Boolean(form.formState.errors.name)}>
-                  <FieldLabel htmlFor="library-name">名称</FieldLabel>
-                  <Input
-                    id="library-name"
-                    {...form.register("name")}
-                    aria-invalid={Boolean(form.formState.errors.name)}
-                  />
-                  <FieldError errors={[form.formState.errors.name]} />
-                </Field>
-                <Field data-invalid={Boolean(form.formState.errors.path)}>
-                  <FieldLabel htmlFor="library-path">容器内路径</FieldLabel>
-                  <Input
-                    id="library-path"
-                    className="font-mono"
-                    {...form.register("path")}
-                    aria-invalid={Boolean(form.formState.errors.path)}
-                  />
-                  <FieldDescription>
-                    例如 /music/source，而不是宿主机的 /mnt/nas/music。
-                  </FieldDescription>
-                  <FieldError errors={[form.formState.errors.path]} />
-                </Field>
+                <Controller
+                  control={form.control}
+                  name="path"
+                  render={({ field }) => (
+                    <Field data-invalid={Boolean(form.formState.errors.path)}>
+                      <FieldLabel>目录</FieldLabel>
+                      <DirectoryTreePicker value={field.value} onChange={field.onChange} />
+                      <FieldError errors={[form.formState.errors.path]} />
+                    </Field>
+                  )}
+                />
                 <Controller
                   control={form.control}
                   name="role"
@@ -216,10 +200,7 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
                   render={({ field }) => (
                     <Field orientation="horizontal">
                       <div className="flex-1">
-                        <FieldLabel htmlFor="watch-enabled">文件变化 Watch</FieldLabel>
-                        <FieldDescription>
-                          NAS Watch 不保证可靠，仍会定期 reconcile。
-                        </FieldDescription>
+                        <FieldLabel htmlFor="watch-enabled">文件监听</FieldLabel>
                       </div>
                       <Switch
                         id="watch-enabled"
@@ -279,10 +260,12 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
       ) : (
         <Alert>
           <FolderSearch />
-          <AlertTitle>还没有 Library Root</AlertTitle>
-          <AlertDescription>先在 Compose 挂载音乐目录，再添加对应的容器内路径。</AlertDescription>
+          <AlertTitle>尚未添加曲库</AlertTitle>
+          <AlertDescription>添加一个音乐目录即可开始扫描。</AlertDescription>
         </Alert>
       )}
+
+      <InlineJobStatus job={latestJob("workspace", "library", "scrape")} />
 
       <TrackCatalog
         tracks={tracks}

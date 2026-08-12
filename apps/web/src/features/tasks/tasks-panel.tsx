@@ -1,4 +1,4 @@
-import { CirclePause, CirclePlay, RefreshCw, Square } from "lucide-react";
+import { CirclePause, CirclePlay, FileText, RefreshCw, Square } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -18,38 +18,19 @@ import { ApiError } from "@/lib/api";
 import { cancelJob, pauseJob, resumeJob, retryFailedJob } from "@/lib/api/methods/jobs";
 import type { Job, JobStatus } from "@/lib/api/types";
 import { formatDate } from "@/lib/format";
+import { useJobActivity } from "./job-activity-context";
+import { jobKindLabels, jobProgress, jobStatusLabels } from "./job-presenter";
 
 type TasksPanelProps = {
-  jobs: Job[];
+  jobs?: Job[];
   onChanged: () => Promise<void>;
 };
-
-const statusLabels: Record<JobStatus, string> = {
-  queued: "排队中",
-  running: "执行中",
-  paused: "已暂停",
-  cancel_requested: "正在取消",
-  cancelled: "已取消",
-  completed: "已完成",
-  completed_with_errors: "部分失败",
-  failed: "失败",
-  interrupted: "启动后待恢复",
-};
-
-const kindLabels: Record<string, string> = {
-  scan: "曲库扫描",
-  tag_edit: "Tag 写入",
-  organize: "Hardlink 整理",
-  trash: "移入回收站",
-  scrape: "元数据刮削",
-  analyze: "Hash 与指纹分析",
-  lyrics: "歌词写入",
-};
-
-export function TasksPanel({ jobs, onChanged }: TasksPanelProps) {
+export function TasksPanel({ jobs: providedJobs, onChanged }: TasksPanelProps) {
+  const { jobs: activityJobs, openLogs, registerJob } = useJobActivity();
+  const jobs = providedJobs ?? activityJobs;
   async function run(action: () => { send: () => Promise<Job> }, success: string) {
     try {
-      await action().send();
+      registerJob(await action().send());
       toast.success(success);
       await onChanged();
     } catch (error) {
@@ -70,19 +51,17 @@ export function TasksPanel({ jobs, onChanged }: TasksPanelProps) {
       {jobs.length ? (
         <section className="grid gap-4 xl:grid-cols-2">
           {jobs.map((job) => {
-            const progress = job.totalItems
-              ? Math.min(100, (job.processedItems / job.totalItems) * 100)
-              : 0;
+            const progress = jobProgress(job);
             return (
               <Card key={job.id}>
                 <CardHeader>
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <CardTitle>{kindLabels[job.kind] ?? job.kind}</CardTitle>
+                      <CardTitle>{jobKindLabels[job.kind] ?? job.kind}</CardTitle>
                       <CardDescription>{formatDate(job.createdAt)}</CardDescription>
                     </div>
                     <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
-                      {statusLabels[job.status]}
+                      {jobStatusLabels[job.status]}
                     </Badge>
                   </div>
                 </CardHeader>
@@ -117,6 +96,10 @@ export function TasksPanel({ jobs, onChanged }: TasksPanelProps) {
                   </p>
                 </CardContent>
                 <CardFooter className="gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => openLogs(job.id)}>
+                    <FileText data-icon="inline-start" />
+                    查看日志
+                  </Button>
                   {job.status === "running" || job.status === "queued" ? (
                     <Button
                       variant="outline"

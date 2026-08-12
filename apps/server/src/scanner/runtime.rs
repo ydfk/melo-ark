@@ -16,11 +16,9 @@ use super::enqueue_scan;
 pub fn start_background_services(state: AppState) {
     refresh_watchers(state.clone());
     tokio::spawn(async move {
-        let mut interval =
-            tokio::time::interval(Duration::from_secs(state.scan.reconcile_interval_sec));
-        interval.tick().await;
         loop {
-            interval.tick().await;
+            let interval = state.runtime.read().await.editable.reconcile_interval_sec;
+            tokio::time::sleep(Duration::from_secs(interval)).await;
             if let Err(error) = enqueue_scheduled_scans(state.clone()).await {
                 tracing::error!(%error, "创建定时扫描任务失败");
             }
@@ -74,7 +72,8 @@ async fn watch_libraries(state: AppState, generation: u64) -> anyhow::Result<()>
             event = receiver.recv() => {
                 let Some(Ok(event)) = event else { continue };
                 let mut affected = affected_libraries(&libraries, &event.paths);
-                tokio::time::sleep(Duration::from_secs(state.scan.watch_debounce_sec)).await;
+                let debounce = state.runtime.read().await.editable.watch_debounce_sec;
+                tokio::time::sleep(Duration::from_secs(debounce)).await;
                 while let Ok(Ok(next_event)) = receiver.try_recv() {
                     affected.extend(affected_libraries(&libraries, &next_event.paths));
                 }

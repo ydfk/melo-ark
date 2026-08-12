@@ -148,7 +148,7 @@ pub async fn preview(
         let target = load_target(state, media_id).await?;
         if !target.writable {
             return Err(AppError::BadRequest(
-                "回收站操作要求 Library Root 允许写入".to_owned(),
+                "回收站操作要求曲库允许写入".to_owned(),
             ));
         }
         let root = Path::new(&target.library_path)
@@ -159,9 +159,7 @@ pub async fn preview(
             .canonicalize()
             .map_err(AppError::internal)?;
         if !source.starts_with(&root) {
-            return Err(AppError::BadRequest(
-                "回收站源路径逃逸 Library Root".to_owned(),
-            ));
+            return Err(AppError::BadRequest("回收站源路径超出曲库范围".to_owned()));
         }
         let trash_root = root.join(".meloark-trash").join(operation_id.to_string());
         let destination = trash_root.join(&target.relative_path);
@@ -377,11 +375,7 @@ pub async fn preview_purge(
                 Ok(metadata) => (Some(library_id), Some(metadata), None),
                 Err(error) => (Some(library_id), None, Some(error.to_string())),
             },
-            None => (
-                None,
-                None,
-                Some("回收站记录缺少 Library Root 标识".to_owned()),
-            ),
+            None => (None, None, Some("回收站记录缺少曲库标识".to_owned())),
         };
         let (size, device_id, inode, status) = metadata
             .map(|metadata| {
@@ -733,10 +727,10 @@ async fn validate_purge_path(
         .fetch_optional(&state.pool)
         .await
         .map_err(AppError::internal)?
-        .ok_or_else(|| AppError::NotFound("Library Root 不存在".to_owned()))?;
+        .ok_or_else(|| AppError::NotFound("曲库不存在".to_owned()))?;
     let root = Path::new(&library_path)
         .canonicalize()
-        .map_err(|error| AppError::BadRequest(format!("无法访问 Library Root：{error}")))?;
+        .map_err(|error| AppError::BadRequest(format!("无法访问曲库：{error}")))?;
     let trash_root = root.join(".meloark-trash").join(operation_id.to_string());
     if !path.is_absolute() || !path.starts_with(&trash_root) {
         return Err(AppError::BadRequest(
@@ -773,7 +767,7 @@ async fn revalidate_and_remove(
 ) -> Result<(), AppError> {
     let library_id = item
         .library_id
-        .ok_or_else(|| AppError::BadRequest("回收站记录缺少 Library Root 标识".to_owned()))?;
+        .ok_or_else(|| AppError::BadRequest("回收站记录缺少曲库标识".to_owned()))?;
     let metadata =
         validate_purge_path(state, library_id, operation_id, Path::new(&item.path)).await?;
     if metadata.len() as i64 != item.expected_size

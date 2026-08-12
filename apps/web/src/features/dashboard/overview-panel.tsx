@@ -16,16 +16,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DashboardActivity } from "@/features/dashboard/dashboard-activity";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { formatBytes, formatDate } from "@/lib/format";
-import type { DashboardStats, Job, LibraryRoot } from "@/lib/api/types";
+import type { DashboardStats, LibraryRoot } from "@/lib/api/types";
 
 type OverviewPanelProps = {
   stats?: DashboardStats;
   libraries: LibraryRoot[];
-  jobs: Job[];
 };
 
-export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
+export function OverviewPanel({ stats, libraries }: OverviewPanelProps) {
+  const { jobs } = useJobActivity();
   const activeJob = jobs.find((job) => ["queued", "running", "paused"].includes(job.status));
   const values = [
     { label: "逻辑曲目", value: stats?.trackCount.toLocaleString("zh-CN") ?? "—", icon: Music2 },
@@ -49,7 +50,7 @@ export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
       icon: ImageOff,
     },
     {
-      label: "Exact Duplicate",
+      label: "完全重复",
       value: stats?.exactDuplicateCount.toLocaleString("zh-CN") ?? "—",
       icon: CopyCheck,
     },
@@ -69,15 +70,15 @@ export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
             {activeJob ? `正在处理：${activeJob.currentItem ?? activeJob.kind}` : "本地服务在线"}
           </Badge>
           <p className="mt-7 font-mono text-xs uppercase tracking-[0.24em] text-primary">
-            Music + Management Dashboard
+            MELOARK 音乐管理
           </p>
           <h1 className="mt-3 font-display text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-            {libraries.length ? "曲库状态一目了然。" : "曲库舱已就绪。"}
+            {libraries.length ? "曲库状态一目了然。" : "开始建立曲库。"}
           </h1>
           <p className="mt-4 max-w-xl leading-7 text-muted-foreground">
             {libraries.length
-              ? `已连接 ${libraries.length} 个 Library Root。基础扫描只读取发生变化的文件，不会在每次启动时 Hash 或 Fingerprint 整个曲库。`
-              : "添加 NAS 中已经挂载到容器的音乐目录。MeloArk 不会下载音乐，也不会未经确认删除源文件。"}
+              ? `已添加 ${libraries.length} 个曲库。`
+              : "添加音乐目录即可开始扫描。"}
           </p>
         </div>
         <div className="record-groove" aria-hidden="true" />
@@ -101,9 +102,7 @@ export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
         <Card>
           <CardHeader>
             <CardTitle>格式分布</CardTitle>
-            <CardDescription>
-              按物理文件容量排序，不把 Hardlink 路径误算为重复建议。
-            </CardDescription>
+            <CardDescription>按物理文件容量排序。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {stats?.formatDistribution.length ? (
@@ -136,7 +135,7 @@ export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
         <Card>
           <CardHeader>
             <CardTitle>最近扫描</CardTitle>
-            <CardDescription>所有 Library Root 中最近一次完成的扫描。</CardDescription>
+            <CardDescription>最近一次完成的曲库扫描。</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="font-mono text-lg">{formatDate(stats?.recentScanAt)}</p>
@@ -155,11 +154,11 @@ export function OverviewPanel({ stats, libraries, jobs }: OverviewPanelProps) {
             <ShieldCheck aria-hidden="true" />
             安全基线
           </CardTitle>
-          <CardDescription>这些规则不会因扫描规模或 Provider 状态而改变。</CardDescription>
+          <CardDescription>涉及文件的操作都需要确认。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
-          <p>批量修改必须 Preview → Confirm → Apply</p>
-          <p>Hardlink 跨文件系统直接报错</p>
+          <p>批量修改先预览再执行</p>
+          <p>硬链接不能跨文件系统</p>
           <p>重复结果只推荐，不自动删除</p>
         </CardContent>
       </Card>

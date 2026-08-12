@@ -22,9 +22,11 @@ import { ApiError } from "@/lib/api";
 import { deleteLibrary, preflightLibraryPath, updateLibrary } from "@/lib/api/methods/library";
 import type { LibraryRoot } from "@/lib/api/types";
 import { formatDate } from "@/lib/format";
+import { DirectoryTreePicker } from "@/features/library/directory-tree-picker";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 
 type LibraryDraft = {
-  name: string;
   path: string;
   role: LibraryRoot["role"];
   scanEnabled: boolean;
@@ -42,13 +44,13 @@ export function LibraryRootCard({
   onScan: (library: LibraryRoot) => Promise<void>;
   onChanged: () => Promise<void>;
 }) {
+  const { latestJob } = useJobActivity();
   const [draft, setDraft] = useState<LibraryDraft>();
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   function openSettings() {
     setDraft({
-      name: library.name,
       path: library.path,
       role: library.role,
       scanEnabled: library.scanEnabled,
@@ -65,7 +67,6 @@ export function LibraryRootCard({
     try {
       const preflight = await preflightLibraryPath(draft.path.trim()).send();
       await updateLibrary(library.id, {
-        name: draft.name.trim(),
         path: preflight.canonicalPath,
         role: draft.role,
         scanEnabled: draft.scanEnabled,
@@ -77,10 +78,10 @@ export function LibraryRootCard({
           .filter(Boolean),
       }).send();
       setDraft(undefined);
-      toast.success("Library Root 已更新");
+      toast.success("曲库已更新");
       await onChanged();
     } catch (error) {
-      showError(error, "Library Root 更新失败");
+      showError(error, "曲库更新失败");
     } finally {
       setSaving(false);
     }
@@ -94,7 +95,7 @@ export function LibraryRootCard({
       toast.success("已删除曲库配置和索引，音乐文件未受影响");
       await onChanged();
     } catch (error) {
-      showError(error, "Library Root 删除失败");
+      showError(error, "曲库删除失败");
     } finally {
       setSaving(false);
     }
@@ -106,15 +107,15 @@ export function LibraryRootCard({
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <CardTitle>{library.name}</CardTitle>
-              <CardDescription className="mt-1 break-all font-mono">{library.path}</CardDescription>
+              <CardTitle className="break-all font-mono text-base">{library.path}</CardTitle>
+              <CardDescription className="mt-1">音乐目录</CardDescription>
             </div>
             <Badge variant="secondary">{library.role}</Badge>
           </div>
         </CardHeader>
         <CardContent className="flex items-end justify-between gap-4">
           <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <span>{library.watchEnabled ? "Watch 已启用" : "仅定时/手动扫描"}</span>
+            <span>{library.watchEnabled ? "文件监听已启用" : "定时或手动扫描"}</span>
             <span>上次扫描：{formatDate(library.lastScanAt)}</span>
           </div>
           <div className="flex gap-2">
@@ -128,15 +129,16 @@ export function LibraryRootCard({
             </Button>
           </div>
         </CardContent>
+        <CardContent className="pt-0">
+          <InlineJobStatus job={latestJob("library", library.id, "scan")} />
+        </CardContent>
       </Card>
 
       <Dialog open={Boolean(draft)} onOpenChange={(open) => !open && setDraft(undefined)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>配置 Library Root</DialogTitle>
-            <DialogDescription>
-              路径保存前会再次预检。删除只移除 MeloArk 配置和索引，不会删除音乐文件。
-            </DialogDescription>
+            <DialogTitle>曲库设置</DialogTitle>
+            <DialogDescription>删除曲库不会删除音乐文件。</DialogDescription>
           </DialogHeader>
           {draft ? (
             <form
@@ -146,23 +148,15 @@ export function LibraryRootCard({
                 void save();
               }}
             >
-              <LibraryTextField
-                id="edit-library-name"
-                label="名称"
-                value={draft.name}
-                onChange={(name) =>
-                  setDraft((current) => (current ? { ...current, name } : current))
-                }
-              />
-              <LibraryTextField
-                id="edit-library-path"
-                label="容器内路径"
-                value={draft.path}
-                monospace
-                onChange={(path) =>
-                  setDraft((current) => (current ? { ...current, path } : current))
-                }
-              />
+              <div className="grid gap-2">
+                <Label>目录</Label>
+                <DirectoryTreePicker
+                  value={draft.path}
+                  onChange={(path) =>
+                    setDraft((current) => (current ? { ...current, path } : current))
+                  }
+                />
+              </div>
               <div className="grid gap-2">
                 <Label>用途</Label>
                 <ToggleGroup
@@ -195,7 +189,7 @@ export function LibraryRootCard({
               />
               <LibrarySwitch
                 id="edit-library-watch"
-                label="启用 Watch"
+                label="启用文件监听"
                 checked={draft.watchEnabled}
                 onChange={(watchEnabled) =>
                   setDraft((current) => (current ? { ...current, watchEnabled } : current))
@@ -212,7 +206,7 @@ export function LibraryRootCard({
               {confirmDelete ? (
                 <Alert variant="destructive">
                   <Trash2 />
-                  <AlertTitle>确认删除「{library.name}」的配置与索引？</AlertTitle>
+                  <AlertTitle className="break-all">确认删除「{library.path}」？</AlertTitle>
                   <AlertDescription>
                     音乐文件不会被删除；正在运行的任务会阻止此操作。
                   </AlertDescription>
@@ -234,7 +228,7 @@ export function LibraryRootCard({
                     删除曲库
                   </Button>
                 )}
-                <Button disabled={saving || !draft.name.trim() || !draft.path.trim()}>
+                <Button disabled={saving || !draft.path.trim()}>
                   <Save data-icon="inline-start" />
                   保存
                 </Button>

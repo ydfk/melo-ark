@@ -11,6 +11,8 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OperationPreview } from "@/features/library/operation-preview";
 import { CoverArtwork } from "@/features/library/cover-artwork";
+import { InlineJobStatus } from "@/features/tasks/inline-job-status";
+import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
 import {
   analyzeDuplicates,
@@ -25,7 +27,7 @@ import { formatBytes, formatDuration } from "@/lib/format";
 
 const kinds: Array<{ value: "all" | DuplicateGroup["kind"]; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "hardlink_alias", label: "Hardlink Alias" },
+  { value: "hardlink_alias", label: "硬链接别名" },
   { value: "binary_exact", label: "Binary Exact" },
   { value: "audio_duplicate", label: "Audio Duplicate" },
   { value: "quality_variant", label: "Quality Variant" },
@@ -33,6 +35,7 @@ const kinds: Array<{ value: "all" | DuplicateGroup["kind"]; label: string }> = [
 ];
 
 export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }) {
+  const { latestJob, registerJob } = useJobActivity();
   const [kind, setKind] = useState<(typeof kinds)[number]["value"]>("all");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -49,7 +52,7 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
   async function analyze() {
     setBusy(true);
     try {
-      await analyzeDuplicates().send();
+      registerJob(await analyzeDuplicates().send());
       toast.success("已创建 Hash + Fingerprint 分析任务");
       await onChanged();
     } catch (error) {
@@ -75,7 +78,7 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
     try {
       setOperation(await applyTrash(operation.id).send());
       setSelected(new Set());
-      toast.success("选中文件已移入各自 Library Root 的回收站");
+      toast.success("选中文件已移入对应曲库的回收站");
       await onChanged();
       await refresh();
     } catch (error) {
@@ -110,12 +113,12 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
           分析全部物理文件
         </Button>
       </div>
+      <InlineJobStatus job={latestJob("workspace", "duplicates", "analyze")} />
       <Alert>
         <ShieldCheck />
         <AlertTitle>分析永远不会删除文件</AlertTitle>
         <AlertDescription>
-          Hardlink Alias 不计为空间浪费。清理必须逐项选择，再经过 Trash Preview
-          与显式确认；推荐保留项仅供参考。
+          硬链接别名不计为空间浪费。清理前会显示预览 与显式确认；推荐保留项仅供参考。
         </AlertDescription>
       </Alert>
       <Tabs
@@ -239,6 +242,9 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
         </p>
       ) : null}
       <OperationPreview operation={operation} />
+      <InlineJobStatus
+        job={operation ? latestJob("operation", operation.id, "trash") : undefined}
+      />
       {operation?.status === "previewed" ? (
         <div className="flex justify-end">
           <Button variant="destructive" onClick={() => void confirmTrash()}>
@@ -254,7 +260,7 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
 function labelKind(kind: DuplicateGroup["kind"]) {
   return (
     {
-      hardlink_alias: "Hardlink Alias",
+      hardlink_alias: "硬链接别名",
       binary_exact: "Binary Exact",
       audio_duplicate: "Audio Duplicate",
       quality_variant: "Quality Variant",

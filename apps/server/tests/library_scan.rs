@@ -12,7 +12,7 @@ use meloark_server::{
         AiConfig, AnalysisConfig, AppConfig, DatabaseConfig, JwtConfig, LoggingConfig,
         PlaybackConfig, ProviderConfig, ScanConfig, ServerConfig,
     },
-    db,
+    db, jobs,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -146,7 +146,6 @@ async fn scan_is_incremental_and_recognizes_hardlink_identity() {
         "POST",
         "/api/libraries",
         Some(json!({
-            "name": "测试曲库",
             "path": context.library_path,
             "role": "source",
             "scanEnabled": true,
@@ -158,6 +157,8 @@ async fn scan_is_incremental_and_recognizes_hardlink_identity() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     let library_id = library["id"].as_str().expect("Library ID");
+    assert!(library.get("name").is_none());
+    assert_eq!(library["path"], context.library_path);
 
     let first = start_scan(&context.app, &token, library_id).await;
     assert_eq!(first["status"], "completed");
@@ -237,6 +238,42 @@ async fn scan_is_incremental_and_recognizes_hardlink_identity() {
     );
     assert!(first.get("itemsPerSecond").is_some());
     assert!(first.get("etaSeconds").is_some());
+    let first_id = first["id"].as_str().expect("任务 ID");
+    let (status, logs) = request(
+        &context.app,
+        "GET",
+        &format!("/api/jobs/{first_id}/logs?limit=200"),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        logs["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    );
+    let (status, first_log_page) = request(
+        &context.app,
+        "GET",
+        &format!("/api/jobs/{first_id}/logs?limit=1"),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first_log_page["items"].as_array().map(Vec::len), Some(1));
+    assert!(first_log_page["nextBefore"].is_number());
+    let (status, error_logs) = request(
+        &context.app,
+        "GET",
+        &format!("/api/jobs/{first_id}/logs?level=error"),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(error_logs["items"].as_array().is_some_and(Vec::is_empty));
 
     let (status, _) = request(
         &context.app,
@@ -260,6 +297,54 @@ async fn scan_is_incremental_and_recognizes_hardlink_identity() {
     .await
     .expect("读取删除曲库后的索引计数");
     assert_eq!(counts, (0, 0, 0));
+    let task_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM jobs WHERE kind = 'scan'), (SELECT COUNT(*) FROM job_items), (SELECT COUNT(*) FROM job_logs)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("读取删除曲库后的任务计数");
+    assert_eq!(task_counts, (0, 0, 0));
+}
+
+#[tokio::test]
+async fn expired_logs_are_cleaned_without_deleting_job_summary() {
+    let context = test_context().await;
+    let pool = db::connect(&context.database_path)
+        .await
+        .expect("连接测试数据库");
+    let job_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO jobs (id, kind, status, created_at, finished_at, updated_at) VALUES (?, 'analyze', 'completed', ?, ?, ?)",
+    )
+    .bind(job_id)
+    .bind(chrono::Utc::now() - chrono::Duration::days(40))
+    .bind(chrono::Utc::now() - chrono::Duration::days(40))
+    .bind(chrono::Utc::now() - chrono::Duration::days(40))
+    .execute(&pool)
+    .await
+    .expect("写入历史任务");
+    sqlx::query(
+        "INSERT INTO job_logs (job_id, level, event_type, message, created_at) VALUES (?, 'info', 'completed', '历史日志', ?)",
+    )
+    .bind(job_id)
+    .bind(chrono::Utc::now() - chrono::Duration::days(40))
+    .execute(&pool)
+    .await
+    .expect("写入历史日志");
+
+    assert_eq!(
+        jobs::cleanup_expired_logs(&pool).await.expect("清理日志"),
+        1
+    );
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM jobs WHERE id = ?), (SELECT COUNT(*) FROM job_logs WHERE job_id = ?)",
+    )
+    .bind(job_id)
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("读取日志清理结果");
+    assert_eq!(counts, (1, 0));
 }
 
 async fn start_scan(app: &Router, token: &str, library_id: &str) -> Value {
