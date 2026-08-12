@@ -3,6 +3,12 @@ name: Build Docker image and Release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的已有 Git Tag，例如 v0.1.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,15 +18,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Validate version tag
         id: version
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "仅允许 v1.2.3 或 v1.2.3-rc.1 格式的标签"
             exit 1
           fi
-          [[ "${GITHUB_REF_NAME}" == *-* ]] && prerelease=true || prerelease=false
+          if ! git show-ref --verify --quiet "refs/tags/$REQUESTED_TAG"; then
+            echo "Tag 不存在：$REQUESTED_TAG"
+            exit 1
+          fi
+          git checkout --detach "refs/tags/$REQUESTED_TAG"
+          [[ "$REQUESTED_TAG" == *-* ]] && prerelease=true || prerelease=false
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "stable=$([[ $prerelease == false ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
@@ -34,9 +50,9 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/meloark
           flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ steps.version.outputs.tag }}
             type=raw,value=latest,enable=${{ steps.version.outputs.stable }}
       - id: build
         uses: docker/build-push-action@v7
@@ -54,23 +70,36 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          STABLE: ${{ steps.version.outputs.stable }}
         run: |
-          release_args=(
-            "${GITHUB_REF_NAME}"
+          assets=(
             compose.yaml
             compose.production.yaml
             .env.example
             .env.production.example
             LICENSE
             THIRD_PARTY_NOTICES.md
-            --verify-tag
-            --generate-notes
-            --title "MeloArk ${GITHUB_REF_NAME}"
           )
-          if [[ "$PRERELEASE" == "true" ]]; then
-            release_args+=(--prerelease)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "MeloArk $RELEASE_TAG" \
+              --prerelease="$PRERELEASE" \
+              --latest="$STABLE"
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            release_args+=(--latest)
+            release_args=(
+              "$RELEASE_TAG"
+              "${assets[@]}"
+              --verify-tag
+              --generate-notes
+              --title "MeloArk $RELEASE_TAG"
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              release_args+=(--prerelease --latest=false)
+            else
+              release_args+=(--latest)
+            fi
+            gh release create "${release_args[@]}"
           fi
-          gh release create "${release_args[@]}"

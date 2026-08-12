@@ -29,7 +29,7 @@ docker compose --env-file .env.production -f compose.production.yaml up -d
 docker compose --env-file .env.production -f compose.production.yaml ps
 ```
 
-只有推送 `v1.2.3` 或 `v1.2.3-rc.1` 格式的 Tag 才会触发镜像构建。Tag workflow 会将 `linux/amd64` 镜像推送到 Docker Hub，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。仓库需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。正式升级应固定版本号，不要依赖 `latest` 回滚。
+推送 `v1.2.3` 或 `v1.2.3-rc.1` 格式的 Tag 会自动触发镜像构建；也可以在 GitHub Actions 中手动运行并输入一个已存在的 Tag。Tag workflow 会检出该 Tag 对应的代码，将 `linux/amd64` 镜像推送到 Docker Hub，并创建或更新附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。仓库需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。正式升级应固定版本号，不要依赖 `latest` 回滚。
 
 打开 `http://HOST:31000` 创建唯一管理员。宿主机音乐目录必须先通过 Compose 挂载；Web 只填写容器路径，例如 `/music/source`。
 

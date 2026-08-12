@@ -113,7 +113,7 @@
 - 50,001 曲目真实 API 性能测试通过：本轮分页列表约 328 ms、FTS 搜索约 228 ms，均低于 5 秒门禁。
 - 登录按用户名限制一分钟内 5 次失败；路径操作限制在 canonicalized Library Root；外部命令使用参数列表且不经过 shell；敏感 query 不进入请求日志字段。
 - 已提供 Apache-2.0 `LICENSE`、第三方声明、部署、备份恢复、OpenSubsonic、安全文档、只读/多曲库 Compose 示例。
-- 普通 CI 只覆盖 Rust fmt/clippy/test/release 与 Web format/lint/test/build，不构建 Docker 镜像；仅 `v1.2.3` 格式的 Tag 会触发 Docker Hub amd64 镜像构建与推送，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
+- 发布工作流支持 `v1.2.3` 格式 Tag 自动触发，也可手动输入已有 Tag；它会检出该 Tag 的代码，构建并推送 Docker Hub amd64 镜像，同时创建或更新附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
 - `linux/amd64` 生产容器已验证只读根文件系统、`no-new-privileges`、UID/GID 10001 与健康检查；真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路也已通过容器验收。
 - GitHub/Gitea 推送目标已配置；远端仍没有发布 Tag，因此 Docker Hub amd64 镜像与 GitHub Release 尚未创建。本轮扫描竞态修复尚未提交或推送。
 

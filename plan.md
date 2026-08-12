@@ -2421,7 +2421,7 @@ Instrumental
 - [x] GitHub Actions
 - [ ] amd64 image release
 
-amd64 构建已验证；本项保留未勾选，直到 `v1.2.3` 格式的版本 Tag 实际发布 Docker Hub 镜像与 GitHub Release。
+amd64 构建已验证；发布可由 `v1.2.3` 格式的 Tag 自动触发，或手动输入已有 Tag。本项保留未勾选，直到实际发布 Docker Hub 镜像与 GitHub Release。
 
 ---
 
