@@ -1,5 +1,6 @@
 services:
   meloark:
+    platform: linux/amd64
     build:
       context: .
     image: "${MELOARK_IMAGE:-meloark:local}"

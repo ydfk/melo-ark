@@ -15,7 +15,7 @@ MeloArk 是面向 NAS / HomeLab 的自托管本地音乐管理、整理与播放
 - OpenSubsonic/Subsonic Server API，供 Symfonium 等客户端连接；
 - 单用户管理员、持久化长任务、SSE 进度与审计日志。
 
-首版发布同时支持 `linux/amd64` 与 `linux/arm64`、SQLite 与单 Docker 镜像。产品边界见 [`plan.md`](plan.md)，逐项审计见 [`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md)，实现证据见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)。
+首版发布支持 `linux/amd64`、SQLite 与单 Docker 镜像。产品边界见 [`plan.md`](plan.md)，逐项审计见 [`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md)，实现证据见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)。
 
 ## Docker 启动
 

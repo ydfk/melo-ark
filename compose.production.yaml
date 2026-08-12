@@ -1,6 +1,7 @@
 services:
   meloark:
-    image: "${MELOARK_IMAGE:-ghcr.io/ydfk/melo-ark:0.1.0}"
+    platform: linux/amd64
+    image: "${MELOARK_IMAGE:-ydfk/meloark:0.1.0}"
     restart: unless-stopped
     init: true
     read_only: true

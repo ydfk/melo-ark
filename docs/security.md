@@ -31,4 +31,4 @@
 - 首版为单管理员，不提供 RBAC。
 - 进程内登录限流在重启后清空；公网部署还应在反向代理层增加 IP 级限流。
 - CORS 为 HomeLab 兼容性允许任意 Origin；Bearer Token 不使用 Cookie 自动携带。公网部署可进一步收紧 Origin。
-- 依赖与镜像应由 GitHub Actions 定期重建；发布前检查 Rust、pnpm 和 Debian 安全公告。
+- 依赖与镜像应由 GitHub Actions 定期重建；发布前检查 Rust、pnpm 和 Alpine Linux 安全公告。

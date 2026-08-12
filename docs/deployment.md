@@ -2,7 +2,7 @@
 
 ## 支持范围
 
-MeloArk v0.1 发布同一标签下的 `linux/amd64` 与 `linux/arm64` 镜像。镜像内包含 Web、Rust Server、FFmpeg/ffprobe、Chromaprint/fpcalc 和 CA 证书；SQLite 必须放在本地持久化目录 `/data`，不要放在 SMB/NFS 音乐目录。
+MeloArk v0.1 仅发布 `linux/amd64` 镜像。镜像使用 Alpine Linux 运行时，内置 Web、Rust Server、FFmpeg/ffprobe、Chromaprint/fpcalc 和 CA 证书；SQLite 必须放在本地持久化目录 `/data`，不要放在 SMB/NFS 音乐目录。
 
 ## 首次启动
 
@@ -29,7 +29,7 @@ docker compose --env-file .env.production -f compose.production.yaml up -d
 docker compose --env-file .env.production -f compose.production.yaml ps
 ```
 
-Tag workflow 会发布包含 `linux/amd64` 与 `linux/arm64` 的镜像清单，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。正式升级应固定版本号，不要依赖 `latest` 回滚。
+只有推送 `v1.2.3` 或 `v1.2.3-rc.1` 格式的 Tag 才会触发镜像构建。Tag workflow 会将 `linux/amd64` 镜像推送到 Docker Hub，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。仓库需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。正式升级应固定版本号，不要依赖 `latest` 回滚。
 
 打开 `http://HOST:31000` 创建唯一管理员。宿主机音乐目录必须先通过 Compose 挂载；Web 只填写容器路径，例如 `/music/source`。
 
@@ -39,9 +39,9 @@ Tag workflow 会发布包含 `linux/amd64` 与 `linux/arm64` 的镜像清单，�
 
 生产镜像已内置非 root 用户和健康检查；`compose.production.yaml` 只额外启用只读根文件系统与禁止提权。若由同机反向代理访问，可把 `MELOARK_BIND_ADDRESS` 改为 `127.0.0.1`。CPU、内存、日志等限制应按实际部署环境通过 Compose 覆盖文件设置。
 
-## 架构与 Windows
+## 平台与 Windows
 
-多架构标签会由 Docker 自动选择当前机器架构：Apple Silicon 使用 `linux/arm64`，常见 Intel/AMD Linux 和 Windows Docker Desktop 使用 `linux/amd64`。MeloArk 发布的是 Linux 容器，不支持 Windows Containers 模式。
+MeloArk 仅支持 `linux/amd64`，适用于常见 Intel/AMD Linux 和 Windows Docker Desktop。不支持其他 CPU 架构或 Windows Containers 模式。
 
 从 Mac 单独构建一个可导入 Windows Docker Desktop 的离线镜像时，只需构建 `linux/amd64`：
 
@@ -56,11 +56,11 @@ docker save -o meloark-0.1.0-linux-amd64.tar meloark:0.1.0-amd64
 docker load -i meloark-0.1.0-linux-amd64.tar
 ```
 
-如果要自行发布一个同时包含两种架构的标签，必须推送到镜像仓库；多架构结果不适合作为普通单架构 `docker save` 文件交付：
+自行发布镜像时也应显式固定 `linux/amd64`：
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
+  --platform linux/amd64 \
   --tag REGISTRY/OWNER/meloark:0.1.0 \
   --push .
 ```

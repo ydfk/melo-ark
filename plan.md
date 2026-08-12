@@ -3,7 +3,7 @@
 > 版本：v0.1 Draft
 > 日期：2026-08-09
 > 定位：面向 NAS / HomeLab / 本地音乐收藏的自托管 Web 音乐管理、整理与播放服务。
-> 首版平台：Linux `amd64` / `arm64`，单 Docker 镜像，SQLite。
+> 首版平台：Linux `amd64`，单 Docker 镜像，SQLite。
 
 ---
 
@@ -14,7 +14,7 @@
 - `Melo`：Melody / Music。
 - `Ark`：方舟、归档容器，表达“把散乱音乐安全收纳、识别、整理成自己的曲库”。
 - 仓库名建议：`meloark`
-- Docker 镜像建议：`ghcr.io/<owner>/meloark`
+- Docker 镜像建议：`<dockerhub-user>/meloark`
 - Web 标题：`MeloArk`
 - 中文描述：`MeloArk - 自托管本地音乐管理与整理中心`
 
@@ -54,7 +54,7 @@
 - 主要管理本地/NAS音乐，不提供在线音乐下载。
 - 当前曲库规模约 `3TB`。
 - 支持多个音乐根目录。
-- 首版同时支持 Linux `amd64` 与 `arm64`。
+- 首版仅支持 Linux `amd64`。
 - 单用户管理员模式。
 - 数据库仅支持 SQLite。
 - 单 Docker 镜像交付。
@@ -219,11 +219,10 @@ React 静态文件由 Axum 直接托管。
 
 SPA 路由需要 fallback 到 `index.html`。
 
-首版构建同一镜像标签下的两个平台：
+首版仅构建以下平台：
 
 ```text
 linux/amd64
-linux/arm64
 ```
 
 ## 4.2 挂载模型
@@ -2199,7 +2198,7 @@ Full Library Exact Hash
 - [x] 前后端真实 API 联通
 - [x] Axum ServeDir 托管 React
 - [x] Docker multi-stage
-- [x] amd64 / arm64 build
+- [x] amd64 build
 - [x] `/api/health`
 - [x] first-run admin
 - [x] SQLite migration
@@ -2420,9 +2419,9 @@ Instrumental
 - [x] THIRD_PARTY_NOTICES
 - [x] LICENSE
 - [x] GitHub Actions
-- [ ] amd64 / arm64 image release
+- [ ] amd64 image release
 
-双架构构建与本地 OCI 索引已验证；本项保留未勾选，直到版本 Tag 实际发布 GHCR 多架构清单与 GitHub Release。
+amd64 构建已验证；本项保留未勾选，直到 `v1.2.3` 格式的版本 Tag 实际发布 Docker Hub 镜像与 GitHub Release。
 
 ---
 

@@ -4,9 +4,9 @@ MeloArk source code is licensed under Apache License 2.0. Its source and contain
 
 ## Runtime programs included in the container
 
-- **FFmpeg / ffprobe** — FFmpeg Project. The final `linux/amd64` image currently installs Debian Bookworm's unmodified FFmpeg package, whose `ffmpeg -buildconf` output includes `--enable-gpl` and GPL components such as x264/x265. Treat that packaged FFmpeg build as **GPL-2.0-or-later**. MeloArk invokes FFmpeg/ffprobe as independent command-line programs; the MeloArk source remains Apache-2.0.
-- **Chromaprint / fpcalc** — AcoustID contributors. Chromaprint's own code is MIT, and upstream documents its ordinary combined work as LGPL-2.1 because of FFmpeg portions. The container's Debian `fpcalc` binary links the GPL-enabled Debian FFmpeg libraries described above, so treat this packaged runtime combination as **GPL-2.0-or-later** as well.
-- **Debian Bookworm runtime packages** — their copyright files are available in `/usr/share/doc/*/copyright` inside the image.
+- **FFmpeg / ffprobe** — FFmpeg Project. The final image installs Alpine Linux's unmodified FFmpeg package. Its `ffmpeg -buildconf` output includes `--enable-gpl` and `--enable-version3`, and `ffmpeg -L` identifies the resulting program as **GPL-3.0-or-later**. MeloArk invokes FFmpeg/ffprobe as independent command-line programs; the MeloArk source remains Apache-2.0.
+- **Chromaprint / fpcalc** — AcoustID contributors. Chromaprint's own code is MIT, and upstream documents its ordinary combined work as LGPL-2.1 because of FFmpeg portions. The container's `fpcalc` binary links the GPL-enabled Alpine FFmpeg libraries described above, so treat this packaged runtime combination as **GPL-3.0-or-later** as well.
+- **Alpine Linux runtime packages** — package license metadata is available through `apk info --license <package>` inside the image; corresponding source and license information is published by Alpine Linux.
 
 ## Application dependencies
 

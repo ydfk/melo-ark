@@ -4,7 +4,7 @@
 
 - Web：Node.js 26.5.0、pnpm 11.17.0。
 - Server：Rust 1.97.1、Rust 2024。
-- Runtime：FFmpeg / ffprobe、Chromaprint / fpcalc。
+- Runtime：Alpine Linux 3.23、FFmpeg / ffprobe、Chromaprint / fpcalc。
 
 建议使用两个 starter 自带的 `mise.toml` 安装精确版本。macOS 上也可以使用 `/Users/liyuhang/.cargo/bin/cargo` 调用现有 Rust 工具链。
 
@@ -40,8 +40,8 @@ pnpm build
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  --output type=oci,dest=/tmp/meloark-multiarch.tar .
+  --platform linux/amd64 \
+  --output type=oci,dest=/tmp/meloark-amd64.tar .
 ```
 
-单架构本地运行使用 `--platform linux/arm64 --load`（Apple Silicon）或 `--platform linux/amd64 --load`（Intel/AMD 与 Windows Docker Desktop）。发布多架构标签时使用 `--push`，详见部署文档。
+本地运行使用 `--platform linux/amd64 --load`。发布标签时使用 `--push`，详见部署文档。

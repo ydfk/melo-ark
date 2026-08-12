@@ -8,23 +8,20 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web/ ./
 RUN pnpm build
 
-FROM --platform=$TARGETPLATFORM rust:1.97.1-bookworm AS server-builder
-ARG TARGETARCH
+FROM rust:1.97.1-alpine3.23 AS server-builder
 WORKDIR /build/apps/server
 COPY apps/server/Cargo.toml apps/server/Cargo.lock ./
 COPY apps/server/migrations ./migrations
 COPY apps/server/src ./src
 RUN --mount=type=cache,id=meloark-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=meloark-server-target-${TARGETARCH},target=/build/apps/server/target \
+    --mount=type=cache,id=meloark-server-target-alpine-amd64,target=/build/apps/server/target \
     cargo build --release --locked \
     && cp target/release/meloark-server /tmp/meloark-server
 
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS runtime
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl ffmpeg libchromaprint-tools \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 meloark \
-    && useradd --uid 10001 --gid meloark --create-home --shell /usr/sbin/nologin meloark
+FROM alpine:3.23 AS runtime
+RUN apk add --no-cache ca-certificates chromaprint curl ffmpeg \
+    && addgroup -g 10001 -S meloark \
+    && adduser -u 10001 -S -D -H -G meloark meloark
 
 WORKDIR /opt/meloark
 COPY --from=server-builder /tmp/meloark-server /usr/local/bin/meloark-server

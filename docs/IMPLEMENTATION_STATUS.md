@@ -11,7 +11,7 @@
 - 已替换 MeloArk 品牌、首页和占位 Logo。
 - 已实现 `/api/health`、首次管理员状态/初始化、登录、当前用户。
 - 已启用 SQLite WAL、foreign keys、busy timeout 与迁移。
-- 已实现 Axum SPA 静态托管与 `linux/amd64`、`linux/arm64` 双架构单镜像 Dockerfile。
+- 已实现 Axum SPA 静态托管与 `linux/amd64` 单镜像 Dockerfile。
 - 已提供 Compose、本地开发文档与配置环境变量覆盖。
 - 后端 `fmt`、`clippy -D warnings`、`test`、`release build` 已通过。
 - 前端 `format:check`、`lint`、`test:run`、`build` 已通过。
@@ -105,7 +105,7 @@
 
 ## M6 — UI Polish / Release
 
-状态：代码与本地发布门禁完成；尚未向外部 GitHub/GHCR 发布。
+状态：代码与本地发布门禁完成；尚未向外部 GitHub/Docker Hub 发布。
 
 - Dashboard 延续唱片纹理与冷蓝控制台方向；桌面和 390×844 移动端均完成登录、总览、曲库双视图、任务、Provider、播放器、回收站、设置与横向导航视觉验收。
 - Dashboard 显示曲目/艺术家/专辑/物理文件、缺失 Tag/歌词/封面、精确/可能重复、格式分布、最近扫描、最近加入和最近播放；Library Root 支持编辑、预检和仅删除配置/索引。
@@ -113,17 +113,17 @@
 - 50,001 曲目真实 API 性能测试通过：本轮分页列表约 328 ms、FTS 搜索约 228 ms，均低于 5 秒门禁。
 - 登录按用户名限制一分钟内 5 次失败；路径操作限制在 canonicalized Library Root；外部命令使用参数列表且不经过 shell；敏感 query 不进入请求日志字段。
 - 已提供 Apache-2.0 `LICENSE`、第三方声明、部署、备份恢复、OpenSubsonic、安全文档、只读/多曲库 Compose 示例。
-- CI 覆盖 Rust fmt/clippy/test/release、Web format/lint/test/build 与 `linux/amd64`、`linux/arm64` 镜像构建；Tag workflow 可向 GHCR 发布带 provenance 与 SBOM 的多架构清单，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
-- OrbStack 已分别运行当前源码的原生 `linux/arm64` 与模拟 `linux/amd64` 生产容器，验证只读根文件系统、`no-new-privileges`、UID/GID 10001 与健康检查；真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路也已通过容器验收。
-- GitHub/Gitea 推送目标已配置，双架构与生产 Compose 已进入远端 `main`；远端仍没有发布 Tag，因此 GHCR 多架构镜像与 GitHub Release 尚未创建。本轮扫描竞态修复尚未提交或推送。
+- 普通 CI 只覆盖 Rust fmt/clippy/test/release 与 Web format/lint/test/build，不构建 Docker 镜像；仅 `v1.2.3` 格式的 Tag 会触发 Docker Hub amd64 镜像构建与推送，并创建附带开发/生产 Compose、环境模板、许可证和第三方声明的 GitHub Release。
+- `linux/amd64` 生产容器已验证只读根文件系统、`no-new-privileges`、UID/GID 10001 与健康检查；真实扫描、FFmpeg、fpcalc、Range、转码及 OpenSubsonic 链路也已通过容器验收。
+- GitHub/Gitea 推送目标已配置；远端仍没有发布 Tag，因此 Docker Hub amd64 镜像与 GitHub Release 尚未创建。本轮扫描竞态修复尚未提交或推送。
 
 ## 最终质量门禁
 
 - Server：47 项测试通过，`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features`、`cargo build --release --locked` 通过。
 - Web：7 项测试通过，`pnpm format:check`、`pnpm lint`、`pnpm test:run`、`pnpm build` 通过。
-- Container：开发/生产 Compose 配置通过；当前源码经 Buildx 实际导出的 OCI 索引同时包含 `linux/amd64` 与 `linux/arm64`。生产容器已在原生 arm64 与模拟 x86_64 环境分别验证健康检查、UID/GID 10001、只读根目录与禁止提权。
+- Container：开发/生产 Compose 配置通过；当前源码已验证 `linux/amd64` 镜像构建，生产容器的健康检查、UID/GID 10001、只读根目录与禁止提权均已验证。
 - Browser：隔离容器中完成首次初始化和 3 首真实 FLAC 扫描；桌面与 390×844 移动端控制台无 warning/error，FLAC 可播放。
 
 ## 外部完成边界
 
-- 远端仍没有版本 Tag；在 Tag workflow 成功发布 GHCR 多架构清单与 GitHub Release 前，不能把外部发布写成已完成。
+- 远端仍没有版本 Tag；在 Tag workflow 成功发布 Docker Hub amd64 镜像与 GitHub Release 前，不能把外部发布写成已完成。
