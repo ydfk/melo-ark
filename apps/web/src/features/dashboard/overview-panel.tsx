@@ -18,11 +18,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DashboardActivity } from "@/features/dashboard/dashboard-activity";
 import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { formatBytes, formatDate } from "@/lib/format";
-import type { DashboardStats, LibraryRoot } from "@/lib/api/types";
+import type { DashboardStats, LibraryGroup } from "@/lib/api/types";
 
 type OverviewPanelProps = {
   stats?: DashboardStats;
-  libraries: LibraryRoot[];
+  libraries: LibraryGroup[];
 };
 
 export function OverviewPanel({ stats, libraries }: OverviewPanelProps) {

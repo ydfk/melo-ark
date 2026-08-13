@@ -108,19 +108,19 @@ pub async fn dashboard_stats(
     let counts: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-          (SELECT COUNT(*) FROM libraries),
-          (SELECT COUNT(*) FROM artists),
-          (SELECT COUNT(*) FROM albums),
-          (SELECT COUNT(*) FROM tracks),
-          (SELECT COUNT(*) FROM media_files),
-          COALESCE((SELECT SUM(file_size) FROM media_files), 0),
-          (SELECT COUNT(*) FROM tracks t WHERE t.title = '' OR t.title IS NULL OR t.album_id IS NULL OR NOT EXISTS
-            (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id)),
+          (SELECT COUNT(*) FROM libraries WHERE role='managed'),
+          (SELECT COUNT(*) FROM artists a WHERE EXISTS (SELECT 1 FROM track_artists ta JOIN media_files mf ON mf.track_id=ta.track_id JOIN libraries l ON l.id=mf.library_id WHERE ta.artist_id=a.id AND mf.available=1 AND l.role='managed')),
+          (SELECT COUNT(*) FROM albums a WHERE EXISTS (SELECT 1 FROM tracks t JOIN media_files mf ON mf.track_id=t.id JOIN libraries l ON l.id=mf.library_id WHERE t.album_id=a.id AND mf.available=1 AND l.role='managed')),
+          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed')),
+          (SELECT COUNT(*) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed'),
+          COALESCE((SELECT SUM(mf.file_size) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed'), 0),
+          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed') AND (t.title = '' OR t.title IS NULL OR t.album_id IS NULL OR NOT EXISTS
+            (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id))),
           (SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running', 'paused', 'cancel_requested')),
-          (SELECT COUNT(*) FROM tracks t WHERE NOT EXISTS
+          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') AND NOT EXISTS
             (SELECT 1 FROM lyrics l WHERE l.track_id = t.id AND l.active = 1)),
-          (SELECT COUNT(*) FROM tracks t WHERE NOT EXISTS
-            (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.has_artwork = 1)),
+          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') AND NOT EXISTS
+            (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id = t.id AND mf.has_artwork = 1 AND ml.role='managed')),
           (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'possible_duplicate'),
           (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'binary_exact')
         "#,
@@ -136,7 +136,8 @@ pub async fn dashboard_stats(
     let format_distribution = sqlx::query_as::<_, FormatDistribution>(
         r#"SELECT UPPER(extension) AS extension, COUNT(*) AS count,
            COALESCE(SUM(file_size), 0) AS total_bytes
-           FROM media_files GROUP BY UPPER(extension) ORDER BY total_bytes DESC, extension"#,
+           FROM media_files mf JOIN libraries l ON l.id=mf.library_id
+           WHERE l.role='managed' GROUP BY UPPER(extension) ORDER BY total_bytes DESC, extension"#,
     )
     .fetch_all(&state.pool)
     .await
@@ -144,14 +145,14 @@ pub async fn dashboard_stats(
     let (recent_added, recent_played) = tokio::try_join!(
         sqlx::query_as::<_, DashboardRecentTrack>(
             r#"SELECT t.id,
-               (SELECT mf.id FROM media_files mf WHERE mf.track_id=t.id ORDER BY COALESCE(mf.quality_score,0) DESC, mf.file_size DESC LIMIT 1) AS media_id,
+               (SELECT mf.id FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed' ORDER BY COALESCE(mf.quality_score,0) DESC, mf.file_size DESC LIMIT 1) AS media_id,
                t.title,
                COALESCE((SELECT GROUP_CONCAT(a.name, '; ') FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id ORDER BY ta.position), '未知艺术家') AS artist,
                COALESCE(al.title, '未分类') AS album,
-               EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id AND mf.has_artwork=1) AS has_artwork,
+               EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.has_artwork=1 AND ml.role='managed') AS has_artwork,
                t.created_at
                FROM tracks t LEFT JOIN albums al ON al.id=t.album_id
-               WHERE EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id)
+               WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed')
                ORDER BY t.created_at DESC LIMIT 6"#,
         )
         .fetch_all(&state.pool),

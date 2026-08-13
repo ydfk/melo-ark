@@ -75,6 +75,53 @@ struct TargetLibrary {
     writable: bool,
 }
 
+pub(crate) struct ManagedLink {
+    pub target_relative_path: String,
+    pub created: bool,
+}
+
+pub(crate) async fn create_ingest_hardlink(
+    state: &AppState,
+    media_id: Uuid,
+    target_library_id: Uuid,
+) -> Result<ManagedLink, AppError> {
+    let source = load_source(state, media_id).await?;
+    let target_library = load_target_library(state, target_library_id).await?;
+    if !target_library.writable || target_library.role != "managed" {
+        return Err(AppError::BadRequest(
+            "整理目标必须是允许写入的已整理曲库".to_owned(),
+        ));
+    }
+    let source_path = safe_source_path(&source)?;
+    let target_root = Path::new(&target_library.path)
+        .canonicalize()
+        .map_err(|error| AppError::BadRequest(format!("整理目标不可访问：{error}")))?;
+    let ingest_template = if source.track_no.is_some() {
+        DEFAULT_TEMPLATE
+    } else {
+        "{artist}/{album}/{title}.{ext}"
+    };
+    let relative = render_target(&source, ingest_template, true)?;
+    let target = target_root.join(&relative);
+    ensure_lexically_inside(&target_root, &target)?;
+    let preflight = preflight(&source_path, &target_root, &target)?;
+    if !preflight.same_filesystem {
+        return Err(AppError::BadRequest(
+            "来源与整理目标不在同一文件系统，无法创建硬链接".to_owned(),
+        ));
+    }
+    if preflight.path_conflict {
+        return Err(AppError::Conflict(
+            "整理目标路径已存在其他文件，拒绝覆盖".to_owned(),
+        ));
+    }
+    let created = create_hardlink(&source_path, &target).await?;
+    Ok(ManagedLink {
+        target_relative_path: relative.to_string_lossy().into_owned(),
+        created,
+    })
+}
+
 pub async fn preview(
     state: &AppState,
     user_id: Uuid,

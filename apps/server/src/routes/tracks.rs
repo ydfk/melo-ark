@@ -46,6 +46,7 @@ pub struct TrackResponse {
     pub quality_score: Option<i64>,
     pub has_lyrics: bool,
     pub has_artwork: bool,
+    pub available: bool,
     pub tag_health: String,
     pub path: String,
 }
@@ -95,6 +96,8 @@ pub struct MediaFileResponse {
     pub has_artwork: bool,
     pub metadata_writable: bool,
     pub library_writable: bool,
+    pub available: bool,
+    pub missing_since: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow, ToSchema)]
@@ -156,7 +159,7 @@ pub async fn files(
           l.path || '/' || mf.relative_path AS path, mf.extension, mf.file_size,
           mf.device_id, mf.inode, mf.hardlink_count, mf.codec, mf.duration_ms,
           mf.bitrate, mf.sample_rate, mf.bit_depth, mf.has_artwork, mf.metadata_writable,
-          l.writable AS library_writable
+          l.writable AS library_writable, mf.available, mf.missing_since
           FROM media_files mf JOIN libraries l ON l.id = mf.library_id
           WHERE mf.track_id = ? ORDER BY mf.file_size DESC, mf.relative_path"#,
     )
@@ -239,42 +242,70 @@ pub async fn list(
 
     let (total, items) = if let Some(search) = search {
         let fts_query = fts_query(search);
-        let total = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*) FROM tracks t
+        let total = if filter.is_none() {
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(DISTINCT mf.track_id)
+                   FROM track_search ts
+                   JOIN media_files mf ON mf.track_id = ts.track_id AND mf.available = 1
+                   JOIN libraries l ON l.id = mf.library_id AND l.role = 'managed'
+                   WHERE track_search MATCH ?"#,
+            )
+            .bind(&fts_query)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM tracks t
                WHERE t.id IN (SELECT track_id FROM track_search WHERE track_search MATCH ?)
+               AND EXISTS (SELECT 1 FROM media_files visible JOIN libraries vl ON vl.id=visible.library_id WHERE visible.track_id=t.id AND visible.available=1 AND vl.role='managed')
                AND (? IS NULL
                  OR (? = 'missing_lyrics' AND NOT EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1))
-                 OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id AND mf.has_artwork=1))
+                 OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.has_artwork=1 AND ml.role='managed'))
                  OR (? = 'missing_tags' AND (t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL))
-                 OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id WHERE mf.track_id=t.id)))"#,
-        )
-        .bind(&fts_query)
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(AppError::internal)?;
+                 OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id JOIN libraries dl ON dl.id=mf.library_id WHERE mf.track_id=t.id AND dl.role='managed')))"#,
+            )
+            .bind(&fts_query)
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?
+        };
         let items = fetch_tracks(&state, Some(&fts_query), filter, per_page, offset).await?;
         (total, items)
     } else {
-        let total = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*) FROM tracks t WHERE ? IS NULL
-               OR (? = 'missing_lyrics' AND NOT EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1))
-               OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id AND mf.has_artwork=1))
-               OR (? = 'missing_tags' AND (t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL))
-               OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id WHERE mf.track_id=t.id))"#,
-        )
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .bind(filter)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(AppError::internal)?;
+        let total = if filter.is_none() {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(DISTINCT mf.track_id) FROM media_files mf
+                 JOIN libraries l ON l.id = mf.library_id
+                 WHERE mf.available = 1 AND l.role = 'managed'",
+            )
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM tracks t
+               WHERE EXISTS (SELECT 1 FROM media_files visible JOIN libraries vl ON vl.id=visible.library_id WHERE visible.track_id=t.id AND visible.available=1 AND vl.role='managed')
+               AND (? IS NULL
+                 OR (? = 'missing_lyrics' AND NOT EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1))
+                 OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.has_artwork=1 AND ml.role='managed'))
+                 OR (? = 'missing_tags' AND (t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL))
+                 OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id JOIN libraries dl ON dl.id=mf.library_id WHERE mf.track_id=t.id AND dl.role='managed')))"#,
+            )
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .bind(filter)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?
+        };
         let items = fetch_tracks(&state, None, filter, per_page, offset).await?;
         (total, items)
     };
@@ -305,23 +336,24 @@ async fn fetch_tracks(
               pm.codec, pm.extension, pm.sample_rate, pm.bit_depth, pm.quality_score,
               EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1) AS has_lyrics,
               pm.has_artwork,
+              EXISTS (SELECT 1 FROM media_files af JOIN libraries alib ON alib.id=af.library_id WHERE af.track_id=t.id AND af.available=1 AND alib.role='managed') AS available,
               CASE WHEN t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL THEN 'missing' ELSE 'complete' END AS tag_health,
               l.path || '/' || pm.relative_path AS path
             FROM tracks t
             LEFT JOIN albums al ON al.id = t.album_id
             JOIN (
-              SELECT track_id, (SELECT id FROM media_files preferred WHERE preferred.track_id = media_files.track_id ORDER BY COALESCE(quality_score, 0) DESC, file_size DESC LIMIT 1) AS media_id,
-                     COUNT(*) AS variant_count, SUM(file_size) AS total_bytes
-              FROM media_files GROUP BY track_id
+              SELECT grouped.track_id, (SELECT preferred.id FROM media_files preferred JOIN libraries pl ON pl.id=preferred.library_id WHERE preferred.track_id = grouped.track_id AND pl.role='managed' ORDER BY preferred.available DESC, COALESCE(preferred.quality_score, 0) DESC, preferred.file_size DESC LIMIT 1) AS media_id,
+                     COUNT(*) AS variant_count, SUM(grouped.file_size) AS total_bytes
+              FROM media_files grouped JOIN libraries gl ON gl.id=grouped.library_id WHERE gl.role='managed' GROUP BY grouped.track_id
             ) ms ON ms.track_id = t.id
             JOIN media_files pm ON pm.id=ms.media_id
             JOIN libraries l ON l.id=pm.library_id
             WHERE t.id IN (SELECT track_id FROM track_search WHERE track_search MATCH ?)
               AND (? IS NULL
                 OR (? = 'missing_lyrics' AND NOT EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1))
-                OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id AND mf.has_artwork=1))
+                OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.has_artwork=1 AND ml.role='managed'))
                 OR (? = 'missing_tags' AND (t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL))
-                OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id WHERE mf.track_id=t.id)))
+                OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id JOIN libraries dl ON dl.id=mf.library_id WHERE mf.track_id=t.id AND dl.role='managed')))
             ORDER BY t.updated_at DESC, t.title
             LIMIT ? OFFSET ?
             "#,
@@ -347,22 +379,23 @@ async fn fetch_tracks(
               pm.codec, pm.extension, pm.sample_rate, pm.bit_depth, pm.quality_score,
               EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1) AS has_lyrics,
               pm.has_artwork,
+              EXISTS (SELECT 1 FROM media_files af JOIN libraries alib ON alib.id=af.library_id WHERE af.track_id=t.id AND af.available=1 AND alib.role='managed') AS available,
               CASE WHEN t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL THEN 'missing' ELSE 'complete' END AS tag_health,
               l.path || '/' || pm.relative_path AS path
             FROM tracks t
             LEFT JOIN albums al ON al.id = t.album_id
             JOIN (
-              SELECT track_id, (SELECT id FROM media_files preferred WHERE preferred.track_id = media_files.track_id ORDER BY COALESCE(quality_score, 0) DESC, file_size DESC LIMIT 1) AS media_id,
-                     COUNT(*) AS variant_count, SUM(file_size) AS total_bytes
-              FROM media_files GROUP BY track_id
+              SELECT grouped.track_id, (SELECT preferred.id FROM media_files preferred JOIN libraries pl ON pl.id=preferred.library_id WHERE preferred.track_id = grouped.track_id AND pl.role='managed' ORDER BY preferred.available DESC, COALESCE(preferred.quality_score, 0) DESC, preferred.file_size DESC LIMIT 1) AS media_id,
+                     COUNT(*) AS variant_count, SUM(grouped.file_size) AS total_bytes
+              FROM media_files grouped JOIN libraries gl ON gl.id=grouped.library_id WHERE gl.role='managed' GROUP BY grouped.track_id
             ) ms ON ms.track_id = t.id
             JOIN media_files pm ON pm.id=ms.media_id
             JOIN libraries l ON l.id=pm.library_id
-            WHERE ? IS NULL
+            WHERE (? IS NULL
               OR (? = 'missing_lyrics' AND NOT EXISTS (SELECT 1 FROM lyrics ly WHERE ly.track_id=t.id AND ly.active=1))
-              OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id=t.id AND mf.has_artwork=1))
+              OR (? = 'missing_cover' AND NOT EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.has_artwork=1 AND ml.role='managed'))
               OR (? = 'missing_tags' AND (t.title='' OR NOT EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id) OR t.album_id IS NULL))
-              OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id WHERE mf.track_id=t.id))
+              OR (? = 'duplicates' AND EXISTS (SELECT 1 FROM duplicate_group_members dgm JOIN media_files mf ON mf.id=dgm.media_file_id JOIN libraries dl ON dl.id=mf.library_id WHERE mf.track_id=t.id AND dl.role='managed')))
             ORDER BY t.updated_at DESC, t.title
             LIMIT ? OFFSET ?
             "#,

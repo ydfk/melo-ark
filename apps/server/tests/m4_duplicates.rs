@@ -103,14 +103,16 @@ async fn hash_fingerprint_and_quality_groups_are_separate_and_safe() {
     let token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("数据库");
     let original_track: Uuid = sqlx::query_scalar(
-        "SELECT mf.track_id FROM media_files mf WHERE mf.relative_path = '晴天.wav'",
+        "SELECT mf.track_id FROM media_files mf
+         JOIN libraries l ON l.id = mf.library_id
+         WHERE l.role = 'managed' AND mf.relative_path LIKE '%晴天.wav'",
     )
     .fetch_one(&pool)
     .await
     .expect("原曲");
-    sqlx::query("UPDATE media_files SET track_id = ?, codec = 'flac', bitrate = 1000000, bit_depth = 24, sample_rate = 96000 WHERE relative_path = '晴天 高码率.wav'")
+    sqlx::query("UPDATE media_files SET track_id = ?, codec = 'flac', bitrate = 1000000, bit_depth = 24, sample_rate = 96000 WHERE id IN (SELECT mf.id FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed' AND mf.relative_path LIKE '%晴天 高码率.wav')")
         .bind(original_track).execute(&pool).await.expect("构造质量变体");
-    sqlx::query("UPDATE media_files SET codec = 'mp3', bitrate = 128000, bit_depth = 16, sample_rate = 44100 WHERE relative_path = '晴天.wav'")
+    sqlx::query("UPDATE media_files SET codec = 'mp3', bitrate = 128000, bit_depth = 16, sample_rate = 44100 WHERE id IN (SELECT mf.id FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed' AND mf.relative_path LIKE '%晴天.wav')")
         .execute(&pool).await.expect("构造低码率");
 
     let (status, job) = request(
@@ -125,7 +127,10 @@ async fn hash_fingerprint_and_quality_groups_are_separate_and_safe() {
     let finished = wait_job(&context.app, &token, job["id"].as_str().expect("任务 ID")).await;
     assert_eq!(finished["status"], "completed");
     let analysis_counts: (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM media_files), (SELECT COUNT(*) FROM audio_hashes), (SELECT COUNT(*) FROM audio_fingerprints)",
+        "SELECT
+           (SELECT COUNT(*) FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed' AND mf.available = 1),
+           (SELECT COUNT(*) FROM audio_hashes ah JOIN media_files mf ON mf.id = ah.media_file_id JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed'),
+           (SELECT COUNT(*) FROM audio_fingerprints af JOIN media_files mf ON mf.id = af.media_file_id JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed')",
     )
     .fetch_one(&pool)
     .await
@@ -221,20 +226,55 @@ async fn authenticate_and_scan(context: &Context) -> String {
     )
     .await;
     let token = login["token"].as_str().expect("JWT").to_owned();
-    let (_, library) = request(&context.app,"POST","/api/libraries",Some(json!({"name":"来源","path":context.source,"role":"source","scanEnabled":true,"watchEnabled":false,"writable":true})),Some(&token)).await;
+    let organized = context
+        .source
+        .parent()
+        .expect("测试根目录")
+        .join("organized");
+    fs::create_dir(&organized).expect("创建整理目录");
+    let (_, library) = request(&context.app,"POST","/api/libraries",Some(json!({"sourcePath":context.source,"organizedPath":organized,"watchEnabled":false,"autoIngestEnabled":true})),Some(&token)).await;
     let (_, job) = request(
         &context.app,
         "POST",
         &format!(
             "/api/libraries/{}/scan",
-            library["id"].as_str().expect("曲库")
+            library["sources"][0]["id"].as_str().expect("来源")
         ),
         None,
         Some(&token),
     )
     .await;
     wait_job(&context.app, &token, job["id"].as_str().expect("任务")).await;
+    wait_for_ingest_job(&context.app, &token).await;
     token
+}
+
+async fn wait_for_ingest_job(app: &Router, token: &str) {
+    for _ in 0..2_000 {
+        let (_, jobs) = request(app, "GET", "/api/jobs?limit=100", None, Some(token)).await;
+        let ingest_jobs: Vec<_> = jobs
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|job| job["kind"] == "ingest")
+            .collect();
+        if !ingest_jobs.is_empty()
+            && ingest_jobs.iter().all(|job| {
+                matches!(
+                    job["status"].as_str(),
+                    Some("completed" | "completed_with_errors" | "failed")
+                )
+            })
+        {
+            assert!(
+                ingest_jobs.iter().all(|job| job["status"] != "failed"),
+                "存在失败的接入任务：{ingest_jobs:?}"
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("接入任务未完成")
 }
 async fn wait_job(app: &Router, token: &str, id: &str) -> Value {
     for _ in 0..400 {

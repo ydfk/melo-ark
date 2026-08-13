@@ -123,25 +123,30 @@ export type DashboardStats = {
   }>;
 };
 
-export type LibraryRoot = {
+export type LibrarySource = {
   id: string;
-  path: string;
+  sourcePath: string;
   scanEnabled: boolean;
   watchEnabled: boolean;
-  writable: boolean;
-  role: "source" | "managed" | "both";
+  autoIngestEnabled: boolean;
   excludePatterns: string[];
   lastScanAt?: string;
   createdAt: string;
   updatedAt: string;
 };
 
+export type LibraryGroup = {
+  organizedLibraryId?: string | null;
+  organizedPath?: string | null;
+  status: "ready" | "needsTarget";
+  sources: LibrarySource[];
+};
+
 export type CreateLibraryRequest = {
-  path: string;
-  scanEnabled: boolean;
+  sourcePath: string;
+  organizedPath: string;
   watchEnabled: boolean;
-  writable: boolean;
-  role: LibraryRoot["role"];
+  autoIngestEnabled: boolean;
   excludePatterns?: string[];
 };
 
@@ -172,6 +177,7 @@ export type Job = {
   kind: string;
   status: JobStatus;
   libraryId?: string;
+  parentJobId?: string;
   sourceType?: string;
   sourceId?: string;
   totalItems: number;
@@ -224,6 +230,7 @@ export type Track = {
   qualityScore?: number;
   hasLyrics: boolean;
   hasArtwork: boolean;
+  available: boolean;
   tagHealth: "complete" | "missing";
   path: string;
 };
@@ -269,6 +276,65 @@ export type MediaFile = {
   hasArtwork: boolean;
   metadataWritable: boolean;
   libraryWritable: boolean;
+  available: boolean;
+  missingSince?: string;
+};
+
+export type ReviewStatus = "pending" | "resolved" | "ignored";
+
+export type ReviewKind =
+  | "metadata_candidate"
+  | "missing_artwork"
+  | "missing_lyrics"
+  | "incomplete_tags"
+  | "duplicate"
+  | "quality_variant"
+  | "organize_required"
+  | "hardlink_conflict"
+  | "not_writable"
+  | "parse_failed"
+  | "job_failed"
+  | "source_missing";
+
+export type ReviewItem = {
+  id: string;
+  kind: ReviewKind;
+  status: ReviewStatus;
+  marked: boolean;
+  title: string;
+  detail: string;
+  trackId?: string;
+  mediaFileId?: string;
+  libraryId?: string;
+  confidence?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReviewPage = {
+  items: ReviewItem[];
+  total: number;
+};
+
+export type ReviewBatchRule =
+  | "high_confidence_metadata"
+  | "best_lyrics"
+  | "missing_artwork"
+  | "reorganize"
+  | "recommended_duplicates";
+
+export type ReviewBatchPreview = {
+  id: string;
+  rule: ReviewBatchRule;
+  totalItems: number;
+  eligibleItems: number;
+  blockedItems: number;
+  items: Array<{
+    reviewId: string;
+    title: string;
+    eligible: boolean;
+    reason?: string;
+  }>;
 };
 
 export type TagField =

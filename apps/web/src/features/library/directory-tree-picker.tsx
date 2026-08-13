@@ -1,7 +1,9 @@
-import { Check, ChevronRight, Folder, FolderOpen, LoaderCircle } from "lucide-react";
+import { Check, ChevronRight, Folder, FolderOpen, FolderPlus, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getDirectories } from "@/lib/api/methods/library";
+import { ApiError } from "@/lib/api";
+import { createDirectory, getDirectories } from "@/lib/api/methods/library";
 import type { DirectoryListing } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -23,10 +26,30 @@ export function DirectoryTreePicker({
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(value || "/");
+  const [creating, setCreating] = useState(false);
+  const [folderName, setFolderName] = useState("");
 
   useEffect(() => {
-    if (open) setSelected(value || "/");
+    if (open) {
+      setSelected(value || "/");
+      setFolderName("");
+    }
   }, [open, value]);
+
+  async function createFolder() {
+    if (!folderName.trim()) return;
+    setCreating(true);
+    try {
+      const directory = await createDirectory(selected, folderName.trim()).send();
+      setSelected(directory.path);
+      setFolderName("");
+      toast.success("文件夹已创建并选中");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.problem.detail : "无法创建文件夹");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <>
@@ -58,6 +81,28 @@ export function DirectoryTreePicker({
                 defaultOpen
               />
             </ScrollArea>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              placeholder="在当前目录中新建文件夹"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void createFolder();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={creating || !folderName.trim()}
+              onClick={() => void createFolder()}
+            >
+              {creating ? <LoaderCircle className="animate-spin" /> : <FolderPlus />}
+              新建
+            </Button>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>

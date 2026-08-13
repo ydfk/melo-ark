@@ -78,10 +78,7 @@ async fn provider_candidates_require_confidence_confirmation_and_batch_job_is_pe
     let context = context().await;
     let token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("连接数据库");
-    let track_id: Uuid = sqlx::query_scalar("SELECT id FROM tracks LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("曲目");
+    let (track_id, _, _) = managed_media(&pool).await;
     let candidate_id = Uuid::new_v4();
     sqlx::query(r#"INSERT INTO scrape_candidates (id, track_id, provider_id, provider_item_id, title, artists_json, album, duration_ms, year, track_no, score, confidence, differences_json, raw_json, created_at)
       VALUES (?, ?, 'musicbrainz', 'fixture-1', '晴天', '["周杰伦"]', '叶惠美', 269000, 2003, 3, 85, 'review', '["album"]', '{}', ?)"#)
@@ -163,15 +160,8 @@ async fn local_lrc_is_scored_and_never_silently_overwritten() {
     let context = context().await;
     let token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("连接数据库");
-    let track_id: Uuid = sqlx::query_scalar("SELECT id FROM tracks LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("曲目");
-    let media_id: Uuid = sqlx::query_scalar("SELECT id FROM media_files LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("媒体");
-    let lrc_path = context.source.join("晴天.lrc");
+    let (track_id, media_id, media_path) = managed_media(&pool).await;
+    let lrc_path = media_path.with_extension("lrc");
     let content =
         "[00:00.00]故事的小黄花\n[00:00.00]The little yellow flower\n[00:00.01]从出生那年就飘着";
     fs::write(&lrc_path, content).expect("写入 LRC");
@@ -252,10 +242,7 @@ async fn provider_retries_transient_http_failure_with_configured_timeout() {
     let context = context().await;
     let token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("连接数据库");
-    let track_id: Uuid = sqlx::query_scalar("SELECT id FROM tracks LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("曲目");
+    let (track_id, _, _) = managed_media(&pool).await;
     let attempts = Arc::new(AtomicUsize::new(0));
     let mock = Router::new()
         .route("/ws/2/recording", get(flaky_musicbrainz))
@@ -280,6 +267,10 @@ async fn provider_retries_transient_http_failure_with_configured_timeout() {
     .execute(&pool)
     .await
     .expect("配置 MusicBrainz fixture");
+    sqlx::query("DELETE FROM provider_cache WHERE provider_id = 'musicbrainz'")
+        .execute(&pool)
+        .await
+        .expect("清除接入阶段的数据源缓存");
 
     let (status, response) = request(
         &context.app,
@@ -337,14 +328,20 @@ async fn authenticate_and_scan(context: &Context) -> String {
     )
     .await;
     let token = login["token"].as_str().expect("JWT").to_owned();
-    let (status, library) = request(&context.app, "POST", "/api/libraries", Some(json!({"name":"来源", "path": context.source, "role":"source", "scanEnabled":true, "watchEnabled":false, "writable":true})), Some(&token)).await;
+    let organized = context
+        .source
+        .parent()
+        .expect("测试根目录")
+        .join("organized");
+    fs::create_dir(&organized).expect("创建整理目录");
+    let (status, library) = request(&context.app, "POST", "/api/libraries", Some(json!({"sourcePath": context.source, "organizedPath": organized, "watchEnabled":false, "autoIngestEnabled":true})), Some(&token)).await;
     assert_eq!(status, StatusCode::CREATED);
     let (_, job) = request(
         &context.app,
         "POST",
         &format!(
             "/api/libraries/{}/scan",
-            library["id"].as_str().expect("曲库 ID")
+            library["sources"][0]["id"].as_str().expect("来源 ID")
         ),
         None,
         Some(&token),
@@ -356,7 +353,50 @@ async fn authenticate_and_scan(context: &Context) -> String {
         job["id"].as_str().expect("扫描任务 ID"),
     )
     .await;
+    wait_for_ingest_job(&context.app, &token).await;
     token
+}
+
+async fn managed_media(pool: &sqlx::SqlitePool) -> (Uuid, Uuid, std::path::PathBuf) {
+    let (track_id, media_id, library_path, relative_path) =
+        sqlx::query_as::<_, (Uuid, Uuid, String, String)>(
+            "SELECT mf.track_id, mf.id, l.path, mf.relative_path
+             FROM media_files mf
+             JOIN libraries l ON l.id = mf.library_id
+             WHERE l.role = 'managed' AND mf.available = 1
+             ORDER BY mf.created_at DESC
+             LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("整理媒体");
+    (
+        track_id,
+        media_id,
+        std::path::PathBuf::from(library_path).join(relative_path),
+    )
+}
+
+async fn wait_for_ingest_job(app: &Router, token: &str) {
+    for _ in 0..300 {
+        let (_, jobs) = request(app, "GET", "/api/jobs?limit=100", None, Some(token)).await;
+        let Some(job) = jobs
+            .as_array()
+            .and_then(|items| items.iter().find(|job| job["kind"] == "ingest"))
+        else {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            continue;
+        };
+        if matches!(
+            job["status"].as_str(),
+            Some("completed" | "completed_with_errors" | "failed")
+        ) {
+            assert_ne!(job["status"], "failed", "接入任务失败：{job}");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("接入任务未完成")
 }
 
 async fn wait_job(app: &Router, token: &str, id: &str) -> Value {

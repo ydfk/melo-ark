@@ -43,7 +43,7 @@ import {
   undoOrganizer,
   undoTags,
 } from "@/lib/api/methods/library";
-import type { LibraryRoot, MediaFile, Operation, TagField, TrackDetail } from "@/lib/api/types";
+import type { LibraryGroup, MediaFile, Operation, TagField, TrackDetail } from "@/lib/api/types";
 import { formatBytes, formatDuration } from "@/lib/format";
 
 const defaultTemplate = "{artist}/{album}/{track:02} - {title}.{ext}";
@@ -70,7 +70,7 @@ const TrackHistoryPanel = lazy(() =>
 type TrackWorkbenchProps = {
   trackId?: string;
   open: boolean;
-  libraries: LibraryRoot[];
+  libraries: LibraryGroup[];
   onOpenChange: (open: boolean) => void;
   onChanged: () => Promise<void>;
 };
@@ -105,9 +105,14 @@ export function TrackWorkbench({
   const [template, setTemplate] = useState(defaultTemplate);
   const [crossPlatformSafe, setCrossPlatformSafe] = useState(true);
 
-  const writableFiles = useMemo(() => files.filter((file) => file.libraryWritable), [files]);
-  const organizerTargets = libraries.filter(
-    (library) => library.writable && (library.role === "managed" || library.role === "both")
+  const writableFiles = useMemo(
+    () => files.filter((file) => file.libraryWritable && file.available),
+    [files]
+  );
+  const organizerTargets = libraries.flatMap((library) =>
+    library.organizedLibraryId && library.organizedPath
+      ? [{ id: library.organizedLibraryId, path: library.organizedPath }]
+      : []
   );
 
   useEffect(() => {
@@ -329,7 +334,7 @@ export function TrackWorkbench({
             {!writableFiles.length ? (
               <Alert variant="destructive">
                 <AlertTitle>当前文件不可写</AlertTitle>
-                <AlertDescription>来源曲库需要允许写入。</AlertDescription>
+                <AlertDescription>当前没有可修改的整理文件。</AlertDescription>
               </Alert>
             ) : null}
             {values ? (
@@ -429,7 +434,10 @@ export function TrackWorkbench({
                       {file.libraryPath} · dev {file.deviceId} · inode {file.inode}
                     </p>
                   </div>
-                  <Badge variant="secondary">{file.extension.toUpperCase()}</Badge>
+                  <div className="flex gap-2">
+                    {!file.available ? <Badge variant="destructive">文件不可用</Badge> : null}
+                    <Badge variant="secondary">{file.extension.toUpperCase()}</Badge>
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>{formatBytes(file.fileSize)}</span>
@@ -444,7 +452,7 @@ export function TrackWorkbench({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={!file.libraryWritable || busy}
+                    disabled={!file.libraryWritable || !file.available || busy}
                     onClick={() => void prepareTrash(file)}
                   >
                     <Trash2 data-icon="inline-start" />

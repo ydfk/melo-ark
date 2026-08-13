@@ -26,6 +26,8 @@ pub struct LibraryRecord {
     pub watch_enabled: bool,
     pub writable: bool,
     pub role: String,
+    pub target_library_id: Option<Uuid>,
+    pub auto_ingest_enabled: bool,
     pub exclude_patterns: String,
     pub last_scan_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -34,29 +36,27 @@ pub struct LibraryRecord {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryResponse {
+pub struct LibrarySourceResponse {
     pub id: Uuid,
-    pub path: String,
+    pub source_path: String,
     pub scan_enabled: bool,
     pub watch_enabled: bool,
-    pub writable: bool,
-    pub role: String,
+    pub auto_ingest_enabled: bool,
     pub exclude_patterns: Vec<String>,
     pub last_scan_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<LibraryRecord> for LibraryResponse {
+impl From<LibraryRecord> for LibrarySourceResponse {
     fn from(record: LibraryRecord) -> Self {
         let exclude_patterns = serde_json::from_str(&record.exclude_patterns).unwrap_or_default();
         Self {
             id: record.id,
-            path: record.path,
+            source_path: record.path,
             scan_enabled: record.scan_enabled,
             watch_enabled: record.watch_enabled,
-            writable: record.writable,
-            role: record.role,
+            auto_ingest_enabled: record.auto_ingest_enabled,
             exclude_patterns,
             last_scan_at: record.last_scan_at,
             created_at: record.created_at,
@@ -65,17 +65,24 @@ impl From<LibraryRecord> for LibraryResponse {
     }
 }
 
+#[derive(Clone, Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryGroupResponse {
+    pub organized_library_id: Option<Uuid>,
+    pub organized_path: Option<String>,
+    pub status: String,
+    pub sources: Vec<LibrarySourceResponse>,
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateLibraryRequest {
-    pub path: String,
-    #[serde(default = "default_true")]
-    pub scan_enabled: bool,
+    pub source_path: String,
+    pub organized_path: String,
     #[serde(default)]
     pub watch_enabled: bool,
-    #[serde(default)]
-    pub writable: bool,
-    pub role: String,
+    #[serde(default = "default_true")]
+    pub auto_ingest_enabled: bool,
     #[serde(default = "default_excludes")]
     pub exclude_patterns: Vec<String>,
 }
@@ -83,11 +90,10 @@ pub struct CreateLibraryRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateLibraryRequest {
-    pub path: Option<String>,
-    pub scan_enabled: Option<bool>,
+    pub source_path: Option<String>,
+    pub organized_path: Option<String>,
     pub watch_enabled: Option<bool>,
-    pub writable: Option<bool>,
-    pub role: Option<String>,
+    pub auto_ingest_enabled: Option<bool>,
     pub exclude_patterns: Option<Vec<String>>,
 }
 

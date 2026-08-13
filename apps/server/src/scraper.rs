@@ -700,6 +700,89 @@ pub async fn apply_candidate(
     .await
 }
 
+pub(crate) async fn preview_candidate_missing_fields(
+    state: &AppState,
+    user_id: Uuid,
+    candidate_id: Uuid,
+    artwork_only: bool,
+) -> Result<OperationResponse, AppError> {
+    let candidate = sqlx::query_as::<_, ScrapeCandidate>(
+        r#"SELECT id, track_id, provider_id, provider_item_id, title,
+          artists_json, album, duration_ms, year, track_no, version_label, artwork_url, score,
+          confidence, differences_json FROM scrape_candidates WHERE id = ?"#,
+    )
+    .bind(candidate_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(AppError::internal)?
+    .ok_or_else(|| AppError::NotFound("刮削候选不存在".to_owned()))?;
+    let current = load_track_query(state, candidate.track_id).await?;
+    let media_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM media_files WHERE track_id = ? AND available = 1",
+    )
+    .bind(candidate.track_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    if media_ids.is_empty() {
+        return Err(AppError::NotFound("曲目没有可写入的媒体文件".to_owned()));
+    }
+    let has_artwork: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM media_files WHERE track_id = ? AND has_artwork = 1)",
+    )
+    .bind(candidate.track_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    let cover_data_base64 = if !has_artwork {
+        match candidate.artwork_url.as_deref() {
+            Some(url) => Some(fetch_artwork(state, url).await?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let missing_title = current.title.trim().is_empty() || current.title == "未命名曲目";
+    let missing_artists =
+        current.artists.is_empty() || current.artists.iter().all(|artist| artist == "未知艺术家");
+    let missing_album = current
+        .album
+        .as_deref()
+        .is_none_or(|album| album.trim().is_empty() || album == "未分类");
+    let artists: Vec<String> =
+        serde_json::from_value(candidate.artists_json).map_err(AppError::internal)?;
+    let set = TagSet {
+        title: (!artwork_only && missing_title).then_some(candidate.title),
+        artists: (!artwork_only && missing_artists).then_some(artists),
+        album: (!artwork_only && missing_album)
+            .then_some(candidate.album)
+            .flatten(),
+        track_no: (!artwork_only && current.track_no.is_none())
+            .then_some(
+                candidate
+                    .track_no
+                    .and_then(|value| u32::try_from(value).ok()),
+            )
+            .flatten(),
+        year: (!artwork_only && current.year.is_none())
+            .then_some(candidate.year.and_then(|value| u32::try_from(value).ok()))
+            .flatten(),
+        cover_data_base64,
+        ..TagSet::default()
+    };
+    tag_operations::preview(
+        state,
+        user_id,
+        TagPreviewRequest {
+            media_ids,
+            set,
+            clear: Vec::new(),
+            transforms: Vec::new(),
+        },
+    )
+    .await
+}
+
 async fn fetch_artwork(state: &AppState, url: &str) -> Result<String, AppError> {
     validate_base_url(url)?;
     let response = state

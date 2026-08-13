@@ -1,5 +1,6 @@
 mod ai;
 mod auth;
+mod catalog;
 mod duplicates;
 mod filesystem;
 mod jobs;
@@ -7,6 +8,7 @@ mod libraries;
 mod lyrics;
 mod organizer;
 mod playback;
+mod reviews;
 mod scraper;
 mod settings;
 mod system;
@@ -24,8 +26,8 @@ use crate::{
     error::Problem,
     jobs::{JobEvent, JobLogPage, JobLogResponse, JobResponse},
     library::{
-        CapabilityResponse, CreateLibraryRequest, LibraryResponse, PathPreflightRequest,
-        PathPreflightResponse, UpdateLibraryRequest,
+        CapabilityResponse, CreateLibraryRequest, LibraryGroupResponse, LibrarySourceResponse,
+        PathPreflightRequest, PathPreflightResponse, UpdateLibraryRequest,
     },
     lyrics::{
         ApplyLyricsRequest, LyricsFailure, LyricsRecord, LyricsSearchRequest, LyricsSearchResponse,
@@ -36,6 +38,10 @@ use crate::{
     playback::{
         CreatePlaylistRequest, PlaybackHistory, Playlist, ScrobbleRequest, TranscodeQuery,
         UpdatePlaylistRequest,
+    },
+    review::{
+        ApplyReviewBatchRequest, ReviewBatchItem, ReviewBatchPreview, ReviewBatchPreviewRequest,
+        ReviewItem, ReviewPage, UpdateReviewRequest,
     },
     runtime_settings::{
         EditableSettings, InfrastructureSettings, SettingsResponse, UpdateSettingsRequest,
@@ -60,7 +66,8 @@ use self::{
         Credentials, SetupStatusResponse, TokenResponse, UpdateProfileRequest,
         UpdateProfileResponse,
     },
-    filesystem::{DirectoryEntry, DirectoryListing},
+    catalog::{CatalogAlbum, CatalogLyrics, CatalogTrack, CatalogTrackPage},
+    filesystem::{CreateDirectoryRequest, DirectoryEntry, DirectoryListing},
     system::{
         DashboardRecentPlay, DashboardRecentTrack, DashboardStatsResponse, FormatDistribution,
         HealthResponse,
@@ -81,13 +88,20 @@ use self::{
         auth::login,
         auth::profile,
         auth::update_profile,
+        catalog::tracks,
+        catalog::albums,
+        catalog::lyrics,
+        catalog::artwork,
+        catalog::play_token,
         filesystem::list_directories,
+        filesystem::create_directory,
         settings::get_settings,
         settings::update_settings,
         libraries::list,
         libraries::create,
         libraries::update,
         libraries::delete,
+        libraries::delete_group,
         libraries::preflight,
         libraries::capabilities,
         libraries::scan,
@@ -146,7 +160,11 @@ use self::{
         playback::create_playlist,
         playback::playlist,
         playback::update_playlist,
-        playback::delete_playlist
+        playback::delete_playlist,
+        reviews::list,
+        reviews::update,
+        reviews::preview_batch,
+        reviews::apply_batch
     ),
     components(schemas(
         Credentials,
@@ -160,14 +178,20 @@ use self::{
         DashboardRecentTrack,
         DashboardRecentPlay,
         UserResponse,
+        CatalogTrack,
+        CatalogTrackPage,
+        CatalogAlbum,
+        CatalogLyrics,
         DirectoryEntry,
         DirectoryListing,
+        CreateDirectoryRequest,
         EditableSettings,
         InfrastructureSettings,
         SettingsResponse,
         UpdateSettingsRequest,
         Problem,
-        LibraryResponse,
+        LibraryGroupResponse,
+        LibrarySourceResponse,
         CreateLibraryRequest,
         UpdateLibraryRequest,
         PathPreflightRequest,
@@ -230,11 +254,19 @@ use self::{
         CreatePlaylistRequest,
         UpdatePlaylistRequest,
         Playlist,
-        playback::PlayTokenResponse
+        playback::PlayTokenResponse,
+        ReviewItem,
+        ReviewPage,
+        UpdateReviewRequest,
+        ReviewBatchPreviewRequest,
+        ReviewBatchItem,
+        ReviewBatchPreview,
+        ApplyReviewBatchRequest
     )),
     tags(
         (name = "system", description = "服务与曲库健康状态"),
         (name = "auth", description = "单管理员认证"),
+        (name = "catalog", description = "无需登录的只读音乐目录与播放凭据"),
         (name = "settings", description = "运行设置与部署信息"),
         (name = "libraries", description = "曲库根目录"),
         (name = "jobs", description = "持久化任务"),
@@ -248,7 +280,8 @@ use self::{
         (name = "lyrics", description = "歌词候选、质量评分与显式写入"),
         (name = "duplicates", description = "分层重复分析与 Quality Score"),
         (name = "ai", description = "可选 AI 元数据建议；不上传原始音频"),
-        (name = "playback", description = "HTTP Range、转码、播放历史、收藏与播放列表")
+        (name = "playback", description = "HTTP Range、转码、播放历史、收藏与播放列表"),
+        (name = "reviews", description = "需要用户确认的曲库处理项目")
     ),
     modifiers(&SecurityAddon)
 )]
@@ -278,7 +311,9 @@ pub fn router(state: AppState) -> Router {
         .merge(duplicates::router())
         .merge(crate::opensubsonic::router())
         .merge(playback::router())
+        .merge(reviews::router())
         .merge(auth::router())
+        .merge(catalog::router())
         .merge(filesystem::router())
         .merge(settings::router())
         .merge(libraries::router())

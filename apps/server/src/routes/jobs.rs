@@ -165,6 +165,8 @@ pub async fn resume(
     match job.kind.as_str() {
         "scrape" => crate::scraper::spawn_batch_job(state, id),
         "analyze" => crate::duplicates::spawn_job(state, id),
+        "ingest" => crate::ingest::resume_job(state, id).await?,
+        "review_batch" => crate::review::resume_batch_job(state, id).await?,
         _ => scanner::spawn_job(state, id),
     }
     Ok(Json(job))
@@ -259,6 +261,12 @@ pub async fn retry_failed(
             }
             "lyrics" => {
                 crate::lyrics::retry_job(&state, id).await?;
+            }
+            "ingest" => {
+                crate::ingest::retry_job(state.clone(), id).await?;
+            }
+            "review_batch" => {
+                crate::review::retry_batch_job(state.clone(), id).await?;
             }
             _ => return Err(AppError::Conflict("未知任务类型不能自动重试".to_owned())),
         }

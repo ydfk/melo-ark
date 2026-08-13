@@ -1,70 +1,60 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
-import { clearAccessToken, getAccessToken } from "@/lib/api";
-import { getProfile } from "@/lib/api/methods/user";
-import type { UserResponse } from "@/lib/api/types";
-import { AuthPage } from "@/pages/auth-page";
-import { DashboardPage } from "@/pages/dashboard";
-import { ForcePasswordPage } from "@/pages/force-password-page";
+import { AuthProvider, useAuth } from "@/features/auth/auth-context";
+import { LoginDialog } from "@/features/auth/login-dialog";
+import { PlayerProvider } from "@/features/player/player-context";
+import { PlayerHome } from "@/features/player/player-home";
 
-type AppState =
-  | { kind: "loading" }
-  | { kind: "auth" }
-  | { kind: "force-password"; user: UserResponse }
-  | { kind: "ready"; user: UserResponse };
+const DashboardPage = lazy(() =>
+  import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage }))
+);
 
 export default function App() {
-  const [state, setState] = useState<AppState>({ kind: "loading" });
+  return (
+    <AuthProvider>
+      <PlayerProvider>
+        <AppShell />
+      </PlayerProvider>
+    </AuthProvider>
+  );
+}
 
-  const bootstrap = useCallback(async () => {
-    setState({ kind: "loading" });
-    try {
-      if (!getAccessToken()) {
-        setState({ kind: "auth" });
-        return;
-      }
+function AppShell() {
+  const { user, isAuthenticated, setUser, logout } = useAuth();
+  const [mode, setMode] = useState<"player" | "management">("player");
 
-      const user = await getProfile().send();
-      setState(
-        user.passwordChangeRequired ? { kind: "force-password", user } : { kind: "ready", user }
-      );
-    } catch {
-      clearAccessToken();
-      setState({ kind: "auth" });
-    }
-  }, []);
-
-  useEffect(() => {
-    void bootstrap();
-  }, [bootstrap]);
-
-  if (state.kind === "loading") {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span className="size-2 animate-pulse rounded-full bg-primary" />
-          正在唤醒你的音乐方舟…
-        </div>
-      </main>
-    );
-  }
-
-  if (state.kind === "auth") {
-    return <AuthPage onAuthenticated={bootstrap} />;
-  }
-
-  if (state.kind === "force-password") {
-    return <ForcePasswordPage username={state.user.username} onChanged={bootstrap} />;
-  }
+  const leaveManagement = () => setMode("player");
+  const handleLogout = () => {
+    logout();
+    leaveManagement();
+  };
 
   return (
-    <DashboardPage
-      user={state.user}
-      onUserChanged={(user) => setState({ kind: "ready", user })}
-      onLogout={() => {
-        clearAccessToken();
-        setState({ kind: "auth" });
-      }}
-    />
+    <>
+      {mode === "management" && isAuthenticated && user ? (
+        <Suspense fallback={<ManagementLoading />}>
+          <DashboardPage
+            user={user}
+            onUserChanged={setUser}
+            onLogout={handleLogout}
+            onOpenPlayer={leaveManagement}
+          />
+        </Suspense>
+      ) : (
+        <PlayerHome onOpenManagement={() => setMode("management")} />
+      )}
+      <LoginDialog />
+    </>
+  );
+}
+
+function ManagementLoading() {
+  return (
+    <main className="grid min-h-screen place-items-center bg-background">
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <span className="size-2 animate-pulse rounded-full bg-primary" />
+        正在打开管理中心…
+      </div>
+    </main>
   );
 }

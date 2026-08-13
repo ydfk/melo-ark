@@ -1,5 +1,20 @@
 import "@testing-library/jest-dom/vitest";
 
+class ResizeObserverMock implements ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, "ResizeObserver", { value: ResizeObserverMock });
+
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: { value: () => false },
+  setPointerCapture: { value: () => undefined },
+  releasePointerCapture: { value: () => undefined },
+  scrollIntoView: { value: () => undefined },
+});
+
 if (!window.matchMedia) {
   Object.defineProperty(window, "matchMedia", {
     writable: true,

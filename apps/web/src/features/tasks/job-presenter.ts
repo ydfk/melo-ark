@@ -16,6 +16,8 @@ export const jobKindLabels: Record<string, string> = {
   scan: "曲库扫描",
   tag_edit: "标签写入",
   organize: "文件整理",
+  ingest: "新增音乐接入",
+  review_batch: "批量处理",
   trash: "移入回收站",
   scrape: "元数据匹配",
   analyze: "重复文件分析",

@@ -28,7 +28,7 @@ struct SongRow {
 
 pub async fn music_folders(state: &AppState) -> Result<Map<String, Value>, AppError> {
     let rows = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT id,name FROM libraries WHERE scan_enabled=1 ORDER BY name",
+        "SELECT id,name FROM libraries WHERE scan_enabled=1 AND role='managed' ORDER BY name",
     )
     .fetch_all(&state.pool)
     .await
@@ -40,7 +40,7 @@ pub async fn music_folders(state: &AppState) -> Result<Map<String, Value>, AppEr
 }
 
 pub async fn artists(state: &AppState, user: Uuid) -> Result<Map<String, Value>, AppError> {
-    let rows=sqlx::query_as::<_,(Uuid,String,i64)>("SELECT a.id,a.name,COUNT(DISTINCT t.album_id) FROM artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks t ON t.id=ta.track_id GROUP BY a.id ORDER BY a.name COLLATE NOCASE").fetch_all(&state.pool).await.map_err(AppError::internal)?;
+    let rows=sqlx::query_as::<_,(Uuid,String,i64)>("SELECT a.id,a.name,COUNT(DISTINCT t.album_id) FROM artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks t ON t.id=ta.track_id WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed') GROUP BY a.id ORDER BY a.name COLLATE NOCASE").fetch_all(&state.pool).await.map_err(AppError::internal)?;
     let mut indexes: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
     for (id, name, album_count) in rows {
@@ -68,7 +68,7 @@ pub async fn artist(
         .await
         .map_err(AppError::internal)?;
     let name = name.ok_or_else(|| AppError::NotFound("艺术家不存在".to_owned()))?;
-    let albums=sqlx::query_as::<_,(Uuid,String,Option<i64>,i64,Option<i64>)>(r#"SELECT al.id,al.title,al.year,COUNT(t.id),SUM(t.duration_ms)/1000 FROM albums al JOIN tracks t ON t.album_id=al.id JOIN track_artists ta ON ta.track_id=t.id WHERE ta.artist_id=? GROUP BY al.id ORDER BY al.year DESC,al.title"#).bind(id).fetch_all(&state.pool).await.map_err(AppError::internal)?;
+    let albums=sqlx::query_as::<_,(Uuid,String,Option<i64>,i64,Option<i64>)>(r#"SELECT al.id,al.title,al.year,COUNT(t.id),SUM(t.duration_ms)/1000 FROM albums al JOIN tracks t ON t.album_id=al.id JOIN track_artists ta ON ta.track_id=t.id WHERE ta.artist_id=? AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed') GROUP BY al.id ORDER BY al.year DESC,al.title"#).bind(id).fetch_all(&state.pool).await.map_err(AppError::internal)?;
     let album=albums.into_iter().map(|(album_id,title,year,count,duration)|json!({"id":format!("al:{album_id}"),"name":title,"title":title,"artist":name,"artistId":format!("ar:{id}"),"songCount":count,"duration":duration.unwrap_or(0),"year":year,"coverArt":format!("al:{album_id}")})).collect::<Vec<_>>();
     let _ = user;
     map(
@@ -79,7 +79,7 @@ pub async fn artist(
 
 pub async fn album(state: &AppState, id: Uuid, user: Uuid) -> Result<Map<String, Value>, AppError> {
     let row = sqlx::query_as::<_, (String, Option<String>, Option<i64>)>(
-        "SELECT title,album_artist,year FROM albums WHERE id=?",
+        "SELECT title,album_artist,year FROM albums WHERE id=? AND EXISTS (SELECT 1 FROM tracks t JOIN media_files mf ON mf.track_id=t.id JOIN libraries l ON l.id=mf.library_id WHERE t.album_id=albums.id AND mf.available=1 AND l.role='managed')",
     )
     .bind(id)
     .fetch_optional(&state.pool)
@@ -111,22 +111,22 @@ pub async fn album_list(
 ) -> Result<Map<String, Value>, AppError> {
     let query = match kind {
         "random" => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY RANDOM() LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY RANDOM() LIMIT ? OFFSET ?"#,
         ),
         "alphabeticalByName" => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY al.title COLLATE NOCASE LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY al.title COLLATE NOCASE LIMIT ? OFFSET ?"#,
         ),
         "frequent" => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY COUNT(ph.id) DESC LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY COUNT(ph.id) DESC LIMIT ? OFFSET ?"#,
         ),
         "recent" => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY MAX(ph.played_at) DESC LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY MAX(ph.played_at) DESC LIMIT ? OFFSET ?"#,
         ),
         "starred" => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY MAX(f.created_at) DESC LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY MAX(f.created_at) DESC LIMIT ? OFFSET ?"#,
         ),
         _ => sqlx::query_scalar::<_, Uuid>(
-            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? GROUP BY al.id ORDER BY MAX(t.created_at) DESC LIMIT ? OFFSET ?"#,
+            r#"SELECT al.id FROM albums al JOIN tracks t ON t.album_id=al.id LEFT JOIN play_history ph ON ph.track_id=t.id AND ph.user_id=? LEFT JOIN favorites f ON f.track_id=t.id AND f.user_id=? WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') GROUP BY al.id ORDER BY MAX(t.created_at) DESC LIMIT ? OFFSET ?"#,
         ),
     };
     let ids = query
@@ -156,7 +156,7 @@ pub async fn random_songs(
     user: Uuid,
     size: i64,
 ) -> Result<Map<String, Value>, AppError> {
-    let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tracks ORDER BY RANDOM() LIMIT ?")
+    let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tracks WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=tracks.id AND mf.available=1 AND l.role='managed') ORDER BY RANDOM() LIMIT ?")
         .bind(size.clamp(1, 500))
         .fetch_all(&state.pool)
         .await
@@ -169,7 +169,13 @@ pub async fn random_songs(
 }
 
 pub async fn starred(state: &AppState, user: Uuid) -> Result<Map<String, Value>, AppError> {
-    let ids = playback::favorite_ids(state, user).await?;
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT f.track_id FROM favorites f WHERE f.user_id=? AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=f.track_id AND mf.available=1 AND l.role='managed') ORDER BY f.created_at DESC",
+    )
+    .bind(user)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
     let mut songs = Vec::new();
     for id in ids {
         songs.push(song_value(&load_song(state, user, id).await?));
@@ -188,20 +194,20 @@ pub async fn search(
     let trimmed = query.trim();
     let (artist_rows, album_rows, ids) = if trimmed.is_empty() {
         let artist_rows = sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id,name FROM artists ORDER BY name LIMIT ?",
+            "SELECT id,name FROM artists a WHERE EXISTS (SELECT 1 FROM track_artists ta JOIN media_files mf ON mf.track_id=ta.track_id JOIN libraries l ON l.id=mf.library_id WHERE ta.artist_id=a.id AND mf.available=1 AND l.role='managed') ORDER BY name LIMIT ?",
         )
         .bind(artist_count.clamp(0, 500))
         .fetch_all(&state.pool)
         .await
         .map_err(AppError::internal)?;
         let album_rows = sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id,title FROM albums ORDER BY title LIMIT ?",
+            "SELECT id,title FROM albums a WHERE EXISTS (SELECT 1 FROM tracks t JOIN media_files mf ON mf.track_id=t.id JOIN libraries l ON l.id=mf.library_id WHERE t.album_id=a.id AND mf.available=1 AND l.role='managed') ORDER BY title LIMIT ?",
         )
         .bind(album_count.clamp(0, 500))
         .fetch_all(&state.pool)
         .await
         .map_err(AppError::internal)?;
-        let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tracks LIMIT ?")
+        let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tracks WHERE EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=tracks.id AND mf.available=1 AND l.role='managed') LIMIT ?")
             .bind(song_count.clamp(0, 500))
             .fetch_all(&state.pool)
             .await
@@ -213,6 +219,7 @@ pub async fn search(
             r#"SELECT DISTINCT a.id,a.name FROM artists a
                JOIN track_artists ta ON ta.artist_id=a.id
                WHERE ta.track_id IN (SELECT track_id FROM track_search WHERE track_search MATCH ?)
+                 AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=ta.track_id AND mf.available=1 AND ml.role='managed')
                ORDER BY a.name LIMIT ?"#,
         )
         .bind(&fts_query)
@@ -223,6 +230,7 @@ pub async fn search(
         let album_rows = sqlx::query_as::<_, (Uuid, String)>(
             r#"SELECT DISTINCT a.id,a.title FROM albums a JOIN tracks t ON t.album_id=a.id
                WHERE t.id IN (SELECT track_id FROM track_search WHERE track_search MATCH ?)
+                 AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed')
                ORDER BY a.title LIMIT ?"#,
         )
         .bind(&fts_query)
@@ -231,7 +239,7 @@ pub async fn search(
         .await
         .map_err(AppError::internal)?;
         let ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT DISTINCT track_id FROM track_search WHERE track_search MATCH ? LIMIT ?",
+            "SELECT DISTINCT track_id FROM track_search WHERE track_search MATCH ? AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=track_search.track_id AND mf.available=1 AND ml.role='managed') LIMIT ?",
         )
         .bind(&fts_query)
         .bind(song_count.clamp(0, 500))
@@ -293,7 +301,7 @@ pub async fn indexes(state: &AppState, user: Uuid) -> Result<Map<String, Value>,
 
 async fn album_songs(state: &AppState, user: Uuid, album_id: Uuid) -> Result<Vec<Value>, AppError> {
     let ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM tracks WHERE album_id=? ORDER BY disc_no,track_no,title",
+        "SELECT id FROM tracks WHERE album_id=? AND EXISTS(SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=tracks.id AND mf.available=1 AND l.role='managed') ORDER BY disc_no,track_no,title",
     )
     .bind(album_id)
     .fetch_all(&state.pool)
@@ -307,7 +315,7 @@ async fn album_songs(state: &AppState, user: Uuid, album_id: Uuid) -> Result<Vec
 }
 
 async fn load_song(state: &AppState, user: Uuid, id: Uuid) -> Result<SongRow, AppError> {
-    sqlx::query_as::<_,SongRow>(r#"SELECT t.id,t.title,COALESCE((SELECT GROUP_CONCAT(a.name,'; ') FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id),'未知艺术家') AS artist,(SELECT a.id FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id ORDER BY ta.position LIMIT 1) AS artist_id,COALESCE(al.title,'未分类') AS album,t.album_id,t.track_no,t.disc_no,t.year,t.genre,t.duration_ms,t.created_at,mf.id AS media_id,mf.relative_path,mf.extension,mf.file_size,mf.bitrate,EXISTS(SELECT 1 FROM favorites f WHERE f.user_id=? AND f.track_id=t.id) AS starred FROM tracks t LEFT JOIN albums al ON al.id=t.album_id JOIN media_files mf ON mf.id=(SELECT id FROM media_files WHERE track_id=t.id ORDER BY COALESCE(quality_score,0) DESC,file_size DESC LIMIT 1) WHERE t.id=?"#).bind(user).bind(id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("曲目不存在".to_owned()))
+    sqlx::query_as::<_,SongRow>(r#"SELECT t.id,t.title,COALESCE((SELECT GROUP_CONCAT(a.name,'; ') FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id),'未知艺术家') AS artist,(SELECT a.id FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id ORDER BY ta.position LIMIT 1) AS artist_id,COALESCE(al.title,'未分类') AS album,t.album_id,t.track_no,t.disc_no,t.year,t.genre,t.duration_ms,t.created_at,mf.id AS media_id,mf.relative_path,mf.extension,mf.file_size,mf.bitrate,EXISTS(SELECT 1 FROM favorites f WHERE f.user_id=? AND f.track_id=t.id) AS starred FROM tracks t LEFT JOIN albums al ON al.id=t.album_id JOIN media_files mf ON mf.id=(SELECT smf.id FROM media_files smf JOIN libraries sl ON sl.id=smf.library_id WHERE smf.track_id=t.id AND smf.available=1 AND sl.role='managed' ORDER BY COALESCE(smf.quality_score,0) DESC,smf.file_size DESC LIMIT 1) WHERE t.id=?"#).bind(user).bind(id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("曲目不存在".to_owned()))
 }
 
 fn song_value(row: &SongRow) -> Value {

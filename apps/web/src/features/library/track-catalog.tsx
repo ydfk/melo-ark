@@ -23,6 +23,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -93,11 +100,13 @@ type TrackCatalogProps = {
   search: string;
   filter?: TrackFilter;
   page: number;
+  perPage: number;
   selected: Set<string>;
   onSearchChange: (value: string) => void;
   onSearch: () => void;
   onFilterChange: (value?: TrackFilter) => void;
   onPageChange: (page: number) => void;
+  onPerPageChange: (perPage: number) => void;
   onSelectionChange: (value: Set<string>) => void;
   onOpenTrack: (id: string) => void;
   onPlayTrack: (id: string) => void;
@@ -109,6 +118,7 @@ export function TrackCatalog(props: TrackCatalogProps) {
   const [view, setView] = useState<"table" | "albums">("table");
   const [visibleColumns, setVisibleColumns] = useState(() => new Set(defaultColumns));
   const albumGroups = useMemo(() => groupAlbums(props.tracks?.items ?? []), [props.tracks?.items]);
+  const totalPages = Math.max(1, Math.ceil((props.tracks?.total ?? 0) / props.perPage));
 
   function toggleColumn(key: ColumnKey, checked: boolean) {
     setVisibleColumns((current) => {
@@ -124,7 +134,7 @@ export function TrackCatalog(props: TrackCatalogProps) {
       <CardHeader className="gap-4">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
           <div>
-            <CardTitle>逻辑曲目</CardTitle>
+            <CardTitle>歌曲列表</CardTitle>
           </div>
           <div className="flex flex-wrap gap-2">
             <ToggleGroup
@@ -170,7 +180,7 @@ export function TrackCatalog(props: TrackCatalogProps) {
       <CardContent>
         {props.selected.size ? (
           <div className="mb-4 flex flex-col justify-between gap-3 rounded-xl border bg-primary/5 px-4 py-3 sm:flex-row sm:items-center">
-            <span className="text-sm">已选择 {props.selected.size} 首曲目</span>
+            <span className="text-sm">已选择 {props.selected.size} 首歌曲</span>
             <div className="flex flex-wrap gap-2">
               <Button variant="ghost" size="sm" onClick={() => props.onSelectionChange(new Set())}>
                 清除
@@ -240,9 +250,37 @@ export function TrackCatalog(props: TrackCatalogProps) {
           )}
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-3 text-sm text-muted-foreground">
-          <span>共 {props.tracks?.total ?? 0} 首逻辑曲目</span>
-          <div className="flex gap-2">
+        <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <span>共 {props.tracks?.total ?? 0} 首歌曲</span>
+            <span>
+              第 {props.page} / {totalPages} 页
+            </span>
+            <Select
+              value={String(props.perPage)}
+              onValueChange={(value) => props.onPerPageChange(Number(value))}
+            >
+              <SelectTrigger className="h-8 w-[112px]" aria-label="每页歌曲数量">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100].map((value) => (
+                  <SelectItem key={value} value={String(value)}>
+                    每页 {value} 首
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={props.page <= 1}
+              onClick={() => props.onPageChange(1)}
+            >
+              首页
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -254,10 +292,18 @@ export function TrackCatalog(props: TrackCatalogProps) {
             <Button
               variant="outline"
               size="sm"
-              disabled={!props.tracks || props.page * props.tracks.perPage >= props.tracks.total}
+              disabled={props.page >= totalPages}
               onClick={() => props.onPageChange(props.page + 1)}
             >
               下一页
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={props.page >= totalPages}
+              onClick={() => props.onPageChange(totalPages)}
+            >
+              末页
             </Button>
           </div>
         </div>
@@ -280,7 +326,7 @@ function TrackTable(
           <TableRow>
             <TableHead className="w-10">
               <Checkbox
-                aria-label="选择当前页全部曲目"
+                aria-label="选择当前页全部歌曲"
                 checked={
                   Boolean(items.length) && items.every((track) => props.selected.has(track.id))
                 }
@@ -321,6 +367,7 @@ function TrackTable(
                   variant="ghost"
                   size="icon"
                   className="size-8"
+                  disabled={!track.available}
                   onClick={() => props.onPlayTrack(track.id)}
                   aria-label={`播放 ${track.title}`}
                 >
@@ -346,6 +393,11 @@ function TrackTable(
                   >
                     {track.title}
                   </Button>
+                  {!track.available ? (
+                    <Badge variant="destructive" className="ml-2">
+                      文件不可用
+                    </Badge>
+                  ) : null}
                 </TableCell>
               ) : null}
               {visible.has("artist") ? <TableCell>{track.artist}</TableCell> : null}
@@ -405,7 +457,7 @@ function TrackTable(
                 colSpan={columns.length + 2}
                 className="h-28 text-center text-muted-foreground"
               >
-                当前搜索或筛选没有曲目。
+                当前搜索或筛选没有歌曲。
               </TableCell>
             </TableRow>
           ) : null}
@@ -482,6 +534,7 @@ function AlbumGrid({
               <Button
                 size="icon"
                 className="absolute bottom-3 right-3 rounded-full opacity-0 shadow-lg transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                disabled={!lead.available}
                 onClick={() => onPlayTrack(lead.id)}
                 aria-label={`播放专辑 ${group.title}`}
               >

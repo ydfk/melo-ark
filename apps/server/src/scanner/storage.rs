@@ -8,24 +8,30 @@ use crate::{
 
 use super::audio::{AudioInfo, FileStat, normalize_text};
 
-pub(super) async fn media_is_unchanged(
+pub(super) struct UpsertMediaResult {
+    pub media_id: Uuid,
+    pub created: bool,
+}
+
+pub(super) async fn unchanged_media_id(
     state: &AppState,
     library_id: Uuid,
     stat: &FileStat,
-) -> Result<bool, AppError> {
-    let existing = sqlx::query_as::<_, (i64, i64, String, String)>(
-        "SELECT file_size, mtime_ms, device_id, inode FROM media_files WHERE library_id = ? AND relative_path = ?",
+) -> Result<Option<Uuid>, AppError> {
+    let existing = sqlx::query_as::<_, (Uuid, i64, i64, String, String)>(
+        "SELECT id, file_size, mtime_ms, device_id, inode FROM media_files WHERE library_id = ? AND relative_path = ?",
     )
     .bind(library_id)
     .bind(&stat.relative_path)
     .fetch_optional(&state.pool)
     .await
     .map_err(AppError::internal)?;
-    Ok(existing.is_some_and(|value| {
-        value.0 == stat.file_size
-            && value.1 == stat.mtime_ms
-            && value.2 == stat.device_id
-            && value.3 == stat.inode
+    Ok(existing.and_then(|value| {
+        (value.1 == stat.file_size
+            && value.2 == stat.mtime_ms
+            && value.3 == stat.device_id
+            && value.4 == stat.inode)
+            .then_some(value.0)
     }))
 }
 
@@ -35,7 +41,7 @@ pub(super) async fn upsert_media(
     library: &LibraryRecord,
     stat: &FileStat,
     info: AudioInfo,
-) -> Result<(), AppError> {
+) -> Result<UpsertMediaResult, AppError> {
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
     let artist_ids = upsert_artists(&mut transaction, &info.artists).await?;
     let album_id = upsert_album(&mut transaction, &info).await?;
@@ -51,15 +57,15 @@ pub(super) async fn upsert_media(
         .await
         .map_err(AppError::internal)?;
     }
-    let media_id = sqlx::query_scalar::<_, Uuid>(
+    let existing_media_id = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM media_files WHERE library_id = ? AND relative_path = ?",
     )
     .bind(library.id)
     .bind(&stat.relative_path)
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(AppError::internal)?
-    .unwrap_or_else(Uuid::new_v4);
+    .map_err(AppError::internal)?;
+    let media_id = existing_media_id.unwrap_or_else(Uuid::new_v4);
     let now = Utc::now();
     sqlx::query(
         r#"
@@ -67,8 +73,9 @@ pub(super) async fn upsert_media(
           (id, track_id, library_id, relative_path, extension, file_size, mtime_ms,
            device_id, inode, hardlink_count, codec, container, duration_ms, bitrate,
            sample_rate, bit_depth, channels, metadata_readable, metadata_writable,
-           has_artwork, scan_error, last_seen_scan_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           has_artwork, scan_error, last_seen_scan_id, available, missing_since,
+           created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
         ON CONFLICT(library_id, relative_path) DO UPDATE SET
           track_id = excluded.track_id, extension = excluded.extension,
           file_size = excluded.file_size, mtime_ms = excluded.mtime_ms,
@@ -80,7 +87,8 @@ pub(super) async fn upsert_media(
           metadata_readable = excluded.metadata_readable,
           metadata_writable = excluded.metadata_writable,
           has_artwork = excluded.has_artwork, scan_error = excluded.scan_error,
-          last_seen_scan_id = excluded.last_seen_scan_id, updated_at = excluded.updated_at
+          last_seen_scan_id = excluded.last_seen_scan_id, available = 1,
+          missing_since = NULL, updated_at = excluded.updated_at
         "#,
     )
     .bind(media_id)
@@ -138,7 +146,19 @@ pub(super) async fn upsert_media(
         &stat.relative_path,
     )
     .await?;
-    transaction.commit().await.map_err(AppError::internal)
+    sqlx::query(
+        "UPDATE review_items SET status = 'resolved', marked = 0, updated_at = ? WHERE kind = 'source_missing' AND media_file_id = ? AND status = 'pending'",
+    )
+    .bind(now)
+    .bind(media_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(AppError::internal)?;
+    transaction.commit().await.map_err(AppError::internal)?;
+    Ok(UpsertMediaResult {
+        media_id,
+        created: existing_media_id.is_none(),
+    })
 }
 
 async fn upsert_artists(
@@ -289,31 +309,39 @@ pub(super) async fn reconcile_removed_files(
     library_id: Uuid,
 ) -> Result<(), AppError> {
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
+    let now = Utc::now();
     sqlx::query(
-        "DELETE FROM media_files WHERE library_id = ? AND COALESCE(last_seen_scan_id, '') != ?",
+        r#"UPDATE media_files SET available = 0,
+             missing_since = COALESCE(missing_since, ?), updated_at = ?
+           WHERE library_id = ? AND available = 1
+             AND COALESCE(last_seen_scan_id, '') != ?"#,
     )
+    .bind(now)
+    .bind(now)
     .bind(library_id)
     .bind(job_id)
     .execute(&mut *transaction)
     .await
     .map_err(AppError::internal)?;
-    sqlx::query("DELETE FROM track_search WHERE media_id NOT IN (SELECT id FROM media_files)")
-        .execute(&mut *transaction)
-        .await
-        .map_err(AppError::internal)?;
-    sqlx::query("DELETE FROM tracks WHERE id NOT IN (SELECT DISTINCT track_id FROM media_files)")
-        .execute(&mut *transaction)
-        .await
-        .map_err(AppError::internal)?;
     sqlx::query(
-        "DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM track_artists)",
+        r#"INSERT INTO review_items
+             (id, kind, status, marked, title, detail, subject_key, track_id,
+              media_file_id, library_id, payload_json, created_at, updated_at)
+           SELECT randomblob(16), 'source_missing', 'pending', 0,
+             '来源文件不可用', mf.relative_path, mf.id, mf.track_id, mf.id,
+             mf.library_id, '{}', ?, ?
+           FROM media_files mf
+           WHERE mf.library_id = ? AND mf.available = 0
+           ON CONFLICT(kind, subject_key) DO UPDATE SET
+             status = 'pending', title = excluded.title, detail = excluded.detail,
+             track_id = excluded.track_id, media_file_id = excluded.media_file_id,
+             library_id = excluded.library_id, updated_at = excluded.updated_at"#,
     )
+    .bind(now)
+    .bind(now)
+    .bind(library_id)
     .execute(&mut *transaction)
     .await
     .map_err(AppError::internal)?;
-    sqlx::query("DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)")
-        .execute(&mut *transaction)
-        .await
-        .map_err(AppError::internal)?;
     transaction.commit().await.map_err(AppError::internal)
 }

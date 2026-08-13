@@ -50,7 +50,8 @@ async fn watch_libraries(state: AppState, generation: u64) -> anyhow::Result<()>
     let libraries = sqlx::query_as::<_, LibraryRecord>(
         r#"
         SELECT id, name, path, scan_enabled, watch_enabled, writable, role,
-               exclude_patterns, last_scan_at, created_at, updated_at
+               target_library_id, auto_ingest_enabled, exclude_patterns,
+               last_scan_at, created_at, updated_at
         FROM libraries WHERE scan_enabled = 1 AND watch_enabled = 1
         "#,
     )

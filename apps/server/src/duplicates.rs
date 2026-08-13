@@ -345,14 +345,19 @@ async fn analyze_one(
     let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
     sqlx::query(r#"UPDATE media_files SET full_hash = COALESCE(?, full_hash), hash_status = CASE WHEN ? THEN 'completed' ELSE hash_status END,
       fingerprint_json = COALESCE(?, fingerprint_json), fingerprint_duration_ms = COALESCE(?, fingerprint_duration_ms), fingerprint_status = CASE WHEN ? THEN 'completed' ELSE fingerprint_status END,
-      quality_score = ?, analysis_error = NULL, updated_at = ? WHERE device_id = ? AND inode = ?"#)
+      quality_score = ?, analysis_error = NULL, updated_at = ?
+      WHERE device_id = ? AND inode = ?
+        AND library_id IN (SELECT id FROM libraries WHERE role = 'managed')"#)
       .bind(hash.as_deref()).bind(calculate_hash)
       .bind(fingerprint_json.as_deref())
       .bind(fingerprint.as_ref().map(|item| item.1)).bind(calculate_fingerprint)
       .bind(quality).bind(now).bind(&target.device_id).bind(&target.inode)
       .execute(&mut *transaction).await.map_err(AppError::internal)?;
     let aliases = sqlx::query_as::<_, (Uuid, i64, i64)>(
-        "SELECT id, file_size, mtime_ms FROM media_files WHERE device_id = ? AND inode = ?",
+        "SELECT mf.id, mf.file_size, mf.mtime_ms
+         FROM media_files mf
+         JOIN libraries l ON l.id = mf.library_id
+         WHERE mf.device_id = ? AND mf.inode = ? AND l.role = 'managed' AND mf.available = 1",
     )
     .bind(&target.device_id)
     .bind(&target.inode)
@@ -398,6 +403,14 @@ async fn analyze_one(
     }
     transaction.commit().await.map_err(AppError::internal)?;
     Ok(())
+}
+
+pub(crate) async fn analyze_media_for_ingest(
+    state: &AppState,
+    media_id: Uuid,
+) -> Result<(), AppError> {
+    analyze_one(state, media_id, true, true).await?;
+    rebuild_groups(state).await
 }
 
 async fn hash_file(path: PathBuf) -> Result<String, AppError> {
@@ -714,14 +727,54 @@ async fn persist_groups(state: &AppState, groups: Vec<PendingGroup>) -> Result<(
         .execute(&mut *tx)
         .await
         .map_err(AppError::internal)?;
+    sqlx::query(
+        "UPDATE review_items SET status = 'resolved', marked = 0, updated_at = ? WHERE kind IN ('duplicate', 'quality_variant') AND status = 'pending'",
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::internal)?;
     for (kind, confidence, reclaimable_bytes, reason, mut members) in groups {
         members.sort_by_key(|item| std::cmp::Reverse(item.2));
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO duplicate_groups (id, kind, confidence, reclaimable_bytes, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-            .bind(id).bind(kind).bind(confidence.clamp(0,100)).bind(reclaimable_bytes).bind(reason).bind(now).bind(now).execute(&mut *tx).await.map_err(AppError::internal)?;
+            .bind(id).bind(&kind).bind(confidence.clamp(0,100)).bind(reclaimable_bytes).bind(&reason).bind(now).bind(now).execute(&mut *tx).await.map_err(AppError::internal)?;
         for (index, (media_id, similarity, quality)) in members.into_iter().enumerate() {
             sqlx::query("INSERT INTO duplicate_group_members (group_id, media_file_id, similarity, quality_score, recommended_keep) VALUES (?, ?, ?, ?, ?)")
                 .bind(id).bind(media_id).bind(similarity).bind(quality).bind(index == 0).execute(&mut *tx).await.map_err(AppError::internal)?;
+        }
+        if kind != "hardlink_alias" {
+            let review_kind = if kind == "quality_variant" {
+                "quality_variant"
+            } else {
+                "duplicate"
+            };
+            sqlx::query(
+                r#"INSERT INTO review_items
+                     (id, kind, status, marked, title, detail, subject_key,
+                      confidence, payload_json, created_at, updated_at)
+                   VALUES (?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(kind, subject_key) DO UPDATE SET status = 'pending',
+                     title = excluded.title, detail = excluded.detail,
+                     confidence = excluded.confidence, payload_json = excluded.payload_json,
+                     updated_at = excluded.updated_at"#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(review_kind)
+            .bind(if review_kind == "quality_variant" {
+                "发现不同质量版本"
+            } else {
+                "发现重复音乐"
+            })
+            .bind(&reason)
+            .bind(id.to_string())
+            .bind(confidence as f64 / 100.0)
+            .bind(serde_json::json!({ "groupId": id, "duplicateKind": kind }).to_string())
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::internal)?;
         }
     }
     tx.commit().await.map_err(AppError::internal)?;
@@ -780,7 +833,7 @@ async fn load_members(state: &AppState, id: Uuid) -> Result<Vec<DuplicateMember>
 
 async fn load_targets(state: &AppState, ids: &[Uuid]) -> Result<Vec<AnalysisTarget>, AppError> {
     if ids.is_empty() {
-        sqlx::query_as::<_, AnalysisTarget>(r#"SELECT mf.id, mf.track_id, l.path AS library_path, mf.relative_path, mf.extension, mf.file_size, mf.device_id, mf.inode, mf.codec, mf.bitrate, mf.sample_rate, mf.bit_depth, mf.channels, mf.duration_ms FROM media_files mf JOIN libraries l ON l.id = mf.library_id ORDER BY mf.id"#).fetch_all(&state.pool).await.map_err(AppError::internal)
+        sqlx::query_as::<_, AnalysisTarget>(r#"SELECT mf.id, mf.track_id, l.path AS library_path, mf.relative_path, mf.extension, mf.file_size, mf.device_id, mf.inode, mf.codec, mf.bitrate, mf.sample_rate, mf.bit_depth, mf.channels, mf.duration_ms FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE l.role = 'managed' AND mf.available = 1 ORDER BY mf.id"#).fetch_all(&state.pool).await.map_err(AppError::internal)
     } else {
         let mut items = Vec::new();
         for id in ids {
@@ -790,7 +843,7 @@ async fn load_targets(state: &AppState, ids: &[Uuid]) -> Result<Vec<AnalysisTarg
     }
 }
 async fn load_target(state: &AppState, id: Uuid) -> Result<AnalysisTarget, AppError> {
-    sqlx::query_as::<_, AnalysisTarget>(r#"SELECT mf.id, mf.track_id, l.path AS library_path, mf.relative_path, mf.extension, mf.file_size, mf.device_id, mf.inode, mf.codec, mf.bitrate, mf.sample_rate, mf.bit_depth, mf.channels, mf.duration_ms FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE mf.id = ?"#)
+    sqlx::query_as::<_, AnalysisTarget>(r#"SELECT mf.id, mf.track_id, l.path AS library_path, mf.relative_path, mf.extension, mf.file_size, mf.device_id, mf.inode, mf.codec, mf.bitrate, mf.sample_rate, mf.bit_depth, mf.channels, mf.duration_ms FROM media_files mf JOIN libraries l ON l.id = mf.library_id WHERE mf.id = ? AND l.role = 'managed' AND mf.available = 1"#)
       .bind(id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(|| AppError::NotFound("媒体文件不存在".to_owned()))
 }
 fn safe_path(target: &AnalysisTarget) -> Result<PathBuf, AppError> {

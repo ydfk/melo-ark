@@ -107,7 +107,7 @@ async fn setup(app: &Router) -> String {
 async fn seed_fake_catalog(database: &str) {
     let pool = db::connect(database).await.expect("数据库");
     let library_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("曲库 ID");
-    sqlx::query("INSERT INTO libraries (id,name,path,scan_enabled,watch_enabled,writable,role,exclude_patterns,created_at,updated_at) VALUES (?, '50k Fixture', '/virtual/music', 1, 0, 0, 'source', '[]', datetime('now'), datetime('now'))")
+    sqlx::query("INSERT INTO libraries (id,name,path,scan_enabled,watch_enabled,writable,role,exclude_patterns,created_at,updated_at) VALUES (?, '50k Fixture', '/virtual/music', 1, 0, 1, 'managed', '[]', datetime('now'), datetime('now'))")
         .bind(library_id)
         .execute(&pool)
         .await

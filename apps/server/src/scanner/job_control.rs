@@ -199,7 +199,8 @@ pub(super) async fn fetch_library(state: &AppState, id: Uuid) -> Result<LibraryR
     sqlx::query_as::<_, LibraryRecord>(
         r#"
         SELECT id, name, path, scan_enabled, watch_enabled, writable, role,
-               exclude_patterns, last_scan_at, created_at, updated_at
+               target_library_id, auto_ingest_enabled, exclude_patterns,
+               last_scan_at, created_at, updated_at
         FROM libraries WHERE id = ?
         "#,
     )

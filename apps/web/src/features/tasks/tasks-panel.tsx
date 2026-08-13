@@ -1,18 +1,18 @@
-import { CirclePause, CirclePlay, FileText, RefreshCw, Square } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CirclePause,
+  CirclePlay,
+  FileText,
+  RefreshCw,
+  Square,
+} from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { ApiError } from "@/lib/api";
 import { cancelJob, pauseJob, resumeJob, retryFailedJob } from "@/lib/api/methods/jobs";
@@ -25,9 +25,19 @@ type TasksPanelProps = {
   jobs?: Job[];
   onChanged: () => Promise<void>;
 };
+
+type TaskGroup = {
+  key: string;
+  jobs: Job[];
+  summary: Job;
+};
+
 export function TasksPanel({ jobs: providedJobs, onChanged }: TasksPanelProps) {
   const { jobs: activityJobs, openLogs, registerJob } = useJobActivity();
   const jobs = providedJobs ?? activityJobs;
+  const groups = useMemo(() => groupJobs(jobs), [jobs]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
   async function run(action: () => { send: () => Promise<Job> }, success: string) {
     try {
       registerJob(await action().send());
@@ -38,110 +48,73 @@ export function TasksPanel({ jobs: providedJobs, onChanged }: TasksPanelProps) {
     }
   }
 
+  function toggleGroup(key: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Persistent Jobs</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">任务中心</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          状态和逐文件结果保存在 SQLite；容器重启后，运行中任务会变为待恢复，不会重复已完成项。
-        </p>
       </div>
 
-      {jobs.length ? (
-        <section className="grid gap-4 xl:grid-cols-2">
-          {jobs.map((job) => {
-            const progress = jobProgress(job);
+      {groups.length ? (
+        <section className="overflow-hidden rounded-2xl border bg-card/70">
+          <div className="hidden border-b bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[minmax(180px,1fr)_110px_minmax(220px,1.2fr)_minmax(140px,0.8fr)_auto] lg:gap-4">
+            <span>任务</span>
+            <span>状态</span>
+            <span>进度</span>
+            <span>当前项目</span>
+            <span className="text-right">操作</span>
+          </div>
+          {groups.map((group) => {
+            const isLegacyGroup = group.jobs.length > 1;
+            const isExpanded = expanded.has(group.key);
             return (
-              <Card key={job.id}>
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <CardTitle>{jobKindLabels[job.kind] ?? job.kind}</CardTitle>
-                      <CardDescription>{formatDate(job.createdAt)}</CardDescription>
-                    </div>
-                    <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
-                      {jobStatusLabels[job.status]}
-                    </Badge>
+              <div key={group.key} className="border-b last:border-b-0">
+                <TaskRow
+                  job={group.summary}
+                  label={
+                    isLegacyGroup ? `历史新增音乐接入 · ${group.jobs.length} 个任务` : undefined
+                  }
+                  leading={
+                    isLegacyGroup ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={isExpanded ? "收起历史任务" : "展开历史任务"}
+                        onClick={() => toggleGroup(group.key)}
+                      >
+                        {isExpanded ? <ChevronDown /> : <ChevronRight />}
+                      </Button>
+                    ) : null
+                  }
+                  actions={
+                    isLegacyGroup ? null : (
+                      <TaskActions job={group.summary} openLogs={openLogs} run={run} />
+                    )
+                  }
+                />
+                {isLegacyGroup && isExpanded ? (
+                  <div className="border-t bg-muted/15 pl-4 sm:pl-10">
+                    {group.jobs.map((job) => (
+                      <TaskRow
+                        key={job.id}
+                        job={job}
+                        compact
+                        actions={<TaskActions job={job} openLogs={openLogs} run={run} />}
+                      />
+                    ))}
                   </div>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  <Field>
-                    <FieldLabel className="justify-between">
-                      <span>处理进度</span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {job.processedItems}/{job.totalItems}
-                      </span>
-                    </FieldLabel>
-                    <Progress value={progress} />
-                  </Field>
-                  <div className="grid grid-cols-3 gap-3 text-center text-xs">
-                    <TaskCount label="成功" value={job.successItems} />
-                    <TaskCount label="跳过" value={job.skippedItems} />
-                    <TaskCount label="失败" value={job.failedItems} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <TaskMetric
-                      label="处理速度"
-                      value={
-                        job.itemsPerSecond == null
-                          ? "等待采样"
-                          : `${formatRate(job.itemsPerSecond)} 项/秒`
-                      }
-                    />
-                    <TaskMetric label="预计剩余" value={formatEta(job.etaSeconds, job.status)} />
-                  </div>
-                  <p className="truncate font-mono text-xs text-muted-foreground">
-                    {job.currentItem ?? job.errorMessage ?? "没有正在处理的文件"}
-                  </p>
-                </CardContent>
-                <CardFooter className="gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => openLogs(job.id)}>
-                    <FileText data-icon="inline-start" />
-                    查看日志
-                  </Button>
-                  {job.status === "running" || job.status === "queued" ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void run(() => pauseJob(job.id), "任务已暂停")}
-                    >
-                      <CirclePause data-icon="inline-start" />
-                      暂停
-                    </Button>
-                  ) : null}
-                  {job.status === "paused" || job.status === "interrupted" ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void run(() => resumeJob(job.id), "任务已恢复")}
-                    >
-                      <CirclePlay data-icon="inline-start" />
-                      恢复
-                    </Button>
-                  ) : null}
-                  {["queued", "running", "paused", "interrupted"].includes(job.status) ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void run(() => cancelJob(job.id), "已请求取消任务")}
-                    >
-                      <Square data-icon="inline-start" />
-                      取消
-                    </Button>
-                  ) : null}
-                  {job.status === "completed_with_errors" || job.status === "failed" ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void run(() => retryFailedJob(job.id), "失败项已重新入队")}
-                    >
-                      <RefreshCw data-icon="inline-start" />
-                      重试失败项
-                    </Button>
-                  ) : null}
-                </CardFooter>
-              </Card>
+                ) : null}
+              </div>
             );
           })}
         </section>
@@ -149,39 +122,175 @@ export function TasksPanel({ jobs: providedJobs, onChanged }: TasksPanelProps) {
         <Alert>
           <RefreshCw />
           <AlertTitle>还没有任务</AlertTitle>
-          <AlertDescription>从曲库页发起首次扫描后，进度与逐项结果会显示在这里。</AlertDescription>
+          <AlertDescription>扫描曲库后，任务进度会显示在这里。</AlertDescription>
         </Alert>
       )}
     </div>
   );
 }
 
-function TaskCount({ label, value }: { label: string; value: number }) {
+function TaskRow({
+  job,
+  label,
+  leading,
+  actions,
+  compact = false,
+}: {
+  job: Job;
+  label?: string;
+  leading?: ReactNode;
+  actions: ReactNode;
+  compact?: boolean;
+}) {
+  const progress = jobProgress(job);
   return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="font-mono text-lg text-foreground">{value}</p>
-      <p className="text-muted-foreground">{label}</p>
+    <div
+      className={`grid gap-3 px-4 ${compact ? "py-3" : "py-4"} lg:grid-cols-[minmax(180px,1fr)_110px_minmax(220px,1.2fr)_minmax(140px,0.8fr)_auto] lg:items-center lg:gap-4`}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {leading}
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">
+            {label ?? jobKindLabels[job.kind] ?? job.kind}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(job.createdAt)}</p>
+        </div>
+      </div>
+      <div>
+        <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
+          {jobStatusLabels[job.status]}
+        </Badge>
+      </div>
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {job.processedItems}/{job.totalItems}
+          </span>
+          <span>
+            成功 {job.successItems} · 跳过 {job.skippedItems} · 失败 {job.failedItems}
+          </span>
+        </div>
+        <Progress value={progress} className="h-1.5" />
+      </div>
+      <p className="truncate font-mono text-xs text-muted-foreground">
+        {job.currentItem ?? job.errorMessage ?? "—"}
+      </p>
+      <div className="flex flex-wrap justify-start gap-1 lg:justify-end">{actions}</div>
     </div>
   );
 }
 
-function TaskMetric({ label, value }: { label: string; value: string }) {
+function TaskActions({
+  job,
+  openLogs,
+  run,
+}: {
+  job: Job;
+  openLogs: (id: string) => void;
+  run: (action: () => { send: () => Promise<Job> }, success: string) => Promise<void>;
+}) {
   return (
-    <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground">{value}</span>
-    </div>
+    <>
+      <Button variant="ghost" size="sm" aria-label="查看日志" onClick={() => openLogs(job.id)}>
+        <FileText />
+        <span className="hidden 2xl:inline">日志</span>
+      </Button>
+      {job.status === "running" || job.status === "queued" ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="暂停任务"
+          onClick={() => void run(() => pauseJob(job.id), "任务已暂停")}
+        >
+          <CirclePause />
+        </Button>
+      ) : null}
+      {job.status === "paused" || job.status === "interrupted" ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="恢复任务"
+          onClick={() => void run(() => resumeJob(job.id), "任务已恢复")}
+        >
+          <CirclePlay />
+        </Button>
+      ) : null}
+      {(["queued", "running", "paused", "interrupted"] as JobStatus[]).includes(job.status) ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="取消任务"
+          onClick={() => void run(() => cancelJob(job.id), "已请求取消任务")}
+        >
+          <Square />
+        </Button>
+      ) : null}
+      {job.status === "completed_with_errors" || job.status === "failed" ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="重试失败项"
+          onClick={() => void run(() => retryFailedJob(job.id), "失败项已重新入队")}
+        >
+          <RefreshCw />
+        </Button>
+      ) : null}
+    </>
   );
 }
 
-function formatRate(rate: number) {
-  return rate >= 10 ? rate.toFixed(1) : rate.toFixed(2);
+function groupJobs(jobs: Job[]): TaskGroup[] {
+  const groups = new Map<string, Job[]>();
+  const order: string[] = [];
+  for (const job of jobs) {
+    const key = job.kind === "ingest" && job.parentJobId ? `ingest:${job.parentJobId}` : job.id;
+    if (!groups.has(key)) order.push(key);
+    groups.set(key, [...(groups.get(key) ?? []), job]);
+  }
+  return order.map((key) => {
+    const entries = groups.get(key) ?? [];
+    return { key, jobs: entries, summary: summarizeJobs(entries) };
+  });
 }
 
-function formatEta(seconds: number | null | undefined, status: JobStatus) {
-  if (status === "completed" || status === "completed_with_errors") return "已完成";
-  if (status !== "running" || seconds == null) return "—";
-  if (seconds < 60) return `${seconds} 秒`;
-  if (seconds < 3_600) return `${Math.ceil(seconds / 60)} 分钟`;
-  return `${Math.ceil(seconds / 3_600)} 小时`;
+function summarizeJobs(jobs: Job[]): Job {
+  if (jobs.length === 1) return jobs[0];
+  const first = jobs[0];
+  return {
+    ...first,
+    status: summarizeStatus(jobs.map((job) => job.status)),
+    totalItems: sum(jobs, "totalItems"),
+    processedItems: sum(jobs, "processedItems"),
+    successItems: sum(jobs, "successItems"),
+    skippedItems: sum(jobs, "skippedItems"),
+    failedItems: sum(jobs, "failedItems"),
+    currentItem: jobs.find((job) => job.currentItem)?.currentItem,
+    errorMessage: jobs.find((job) => job.errorMessage)?.errorMessage,
+  };
+}
+
+function summarizeStatus(statuses: JobStatus[]): JobStatus {
+  const priority: JobStatus[] = [
+    "running",
+    "cancel_requested",
+    "paused",
+    "queued",
+    "interrupted",
+    "failed",
+    "completed_with_errors",
+    "cancelled",
+    "completed",
+  ];
+  return priority.find((status) => statuses.includes(status)) ?? "completed";
+}
+
+function sum(
+  jobs: Job[],
+  key: "totalItems" | "processedItems" | "successItems" | "skippedItems" | "failedItems"
+) {
+  return jobs.reduce((total, job) => total + job[key], 0);
 }

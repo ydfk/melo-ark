@@ -97,11 +97,14 @@ async fn web_stream_range_transcode_history_favorite_and_playlist_work() {
     let context = context().await;
     let token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("数据库");
-    let (track_id, media_id): (Uuid, Uuid) =
-        sqlx::query_as("SELECT track_id, id FROM media_files LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .expect("媒体");
+    let (track_id, media_id): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT mf.track_id, mf.id FROM media_files mf
+         JOIN libraries l ON l.id = mf.library_id
+         WHERE l.role = 'managed' AND mf.available = 1 LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("媒体");
 
     let response = raw(
         &context.app,
@@ -222,11 +225,14 @@ async fn symfonium_style_json_xml_browse_search_and_media_contracts_work() {
     let context = context().await;
     let _token = authenticate_and_scan(&context).await;
     let pool = db::connect(&context.database).await.expect("数据库");
-    let (track_id, media_id): (Uuid, Uuid) =
-        sqlx::query_as("SELECT track_id, id FROM media_files LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .expect("曲目");
+    let (track_id, media_id): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT mf.track_id, mf.id FROM media_files mf
+         JOIN libraries l ON l.id = mf.library_id
+         WHERE l.role = 'managed' AND mf.available = 1 LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("曲目");
     let (_, preview) = json_request(
         &context.app,
         "POST",
@@ -439,11 +445,17 @@ async fn authenticate_and_scan(context: &Context) -> String {
     )
     .await;
     let token = login["token"].as_str().expect("JWT").to_owned();
+    let organized = context
+        .source
+        .parent()
+        .expect("测试根目录")
+        .join("organized");
+    fs::create_dir(&organized).expect("创建整理目录");
     let (_, library) = json_request(
         &context.app,
         "POST",
         "/api/libraries",
-        Some(json!({"name":"来源","path":context.source,"role":"source","scanEnabled":true,"watchEnabled":false,"writable":true})),
+        Some(json!({"sourcePath":context.source,"organizedPath":organized,"watchEnabled":false,"autoIngestEnabled":true})),
         Some(&token),
     )
     .await;
@@ -452,7 +464,7 @@ async fn authenticate_and_scan(context: &Context) -> String {
         "POST",
         &format!(
             "/api/libraries/{}/scan",
-            library["id"].as_str().expect("曲库")
+            library["sources"][0]["id"].as_str().expect("来源")
         ),
         None,
         Some(&token),
@@ -472,11 +484,39 @@ async fn authenticate_and_scan(context: &Context) -> String {
             Some("completed" | "completed_with_errors" | "failed")
         ) {
             assert_eq!(current["status"], "completed");
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for _ in 0..500 {
+        let (_, jobs) = json_request(
+            &context.app,
+            "GET",
+            "/api/jobs?limit=100",
+            None,
+            Some(&token),
+        )
+        .await;
+        let ingest_jobs: Vec<_> = jobs
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|job| job["kind"] == "ingest")
+            .collect();
+        if !ingest_jobs.is_empty()
+            && ingest_jobs.iter().all(|job| {
+                matches!(
+                    job["status"].as_str(),
+                    Some("completed" | "completed_with_errors" | "failed")
+                )
+            })
+        {
+            assert!(ingest_jobs.iter().all(|job| job["status"] != "failed"));
             return token;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!("扫描未完成")
+    panic!("接入未完成")
 }
 
 async fn json_request(

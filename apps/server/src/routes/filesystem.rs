@@ -1,6 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use axum::{Json, Router, extract::Query, extract::State, http::HeaderMap, routing::get};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -29,8 +34,44 @@ pub struct DirectoryListing {
     pub directories: Vec<DirectoryEntry>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDirectoryRequest {
+    pub parent_path: String,
+    pub name: String,
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/filesystem/directories", get(list_directories))
+    Router::new()
+        .route("/api/filesystem/directories", get(list_directories))
+        .route("/api/filesystem/directories", post(create_directory))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/filesystem/directories",
+    tag = "libraries",
+    security(("bearerAuth" = [])),
+    request_body = CreateDirectoryRequest,
+    responses(
+        (status = 201, description = "目录已创建", body = DirectoryEntry),
+        (status = 409, description = "目录已经存在", body = crate::error::Problem),
+        (status = 422, description = "名称或父目录不可用", body = crate::error::Problem)
+    )
+)]
+pub async fn create_directory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateDirectoryRequest>,
+) -> Result<(StatusCode, Json<DirectoryEntry>), AppError> {
+    require_user_id(&headers, &state)?;
+    let parent = PathBuf::from(request.parent_path);
+    let name = request.name.trim().to_owned();
+    validate_directory_name(&name)?;
+    let entry = tokio::task::spawn_blocking(move || create_child_directory(&parent, &name))
+        .await
+        .map_err(AppError::internal)??;
+    Ok((StatusCode::CREATED, Json(entry)))
 }
 
 #[utoipa::path(
@@ -92,5 +133,44 @@ fn read_listing(requested: &Path) -> Result<DirectoryListing, AppError> {
             .filter(|parent| *parent != current)
             .map(|parent| parent.to_string_lossy().into_owned()),
         directories,
+    })
+}
+
+fn validate_directory_name(name: &str) -> Result<(), AppError> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.contains(['/', '\\', ':', '\0'])
+        || path.file_name().is_none()
+    {
+        return Err(AppError::BadRequest(
+            "文件夹名称只能包含单个有效名称".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn create_child_directory(parent: &Path, name: &str) -> Result<DirectoryEntry, AppError> {
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| AppError::BadRequest(format!("父目录不可访问：{error}")))?;
+    if !canonical_parent.is_dir() {
+        return Err(AppError::BadRequest("父路径不是目录".to_owned()));
+    }
+    let child = canonical_parent.join(name);
+    match std::fs::create_dir(&child) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(AppError::Conflict("该文件夹已经存在".to_owned()));
+        }
+        Err(error) => {
+            return Err(AppError::BadRequest(format!("无法创建文件夹：{error}")));
+        }
+    }
+    let canonical_child = child.canonicalize().map_err(AppError::internal)?;
+    Ok(DirectoryEntry {
+        name: name.to_owned(),
+        path: canonical_child.to_string_lossy().into_owned(),
+        readable: std::fs::read_dir(&canonical_child).is_ok(),
     })
 }

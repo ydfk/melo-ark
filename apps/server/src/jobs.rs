@@ -13,6 +13,7 @@ pub struct JobResponse {
     pub kind: String,
     pub status: String,
     pub library_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
     pub source_type: Option<String>,
     pub source_id: Option<String>,
     pub total_items: i64,
@@ -36,6 +37,7 @@ struct JobRow {
     kind: String,
     status: String,
     library_id: Option<Uuid>,
+    parent_job_id: Option<Uuid>,
     source_type: Option<String>,
     source_id: Option<String>,
     total_items: i64,
@@ -75,6 +77,7 @@ impl JobRow {
             kind: self.kind,
             status: self.status,
             library_id: self.library_id,
+            parent_job_id: self.parent_job_id,
             source_type: self.source_type,
             source_id: self.source_id,
             total_items: self.total_items,
@@ -208,7 +211,7 @@ pub async fn create_scan_job(state: &AppState, library_id: Uuid) -> Result<JobRe
 pub async fn fetch_job(pool: &SqlitePool, id: Uuid) -> Result<JobResponse, AppError> {
     sqlx::query_as::<_, JobRow>(
         r#"
-        SELECT id, kind, status, library_id, source_type, source_id,
+        SELECT id, kind, status, library_id, parent_job_id, source_type, source_id,
                total_items, processed_items, success_items,
                skipped_items, failed_items, current_item, error_message, created_at,
                started_at, finished_at, updated_at
@@ -226,7 +229,7 @@ pub async fn fetch_job(pool: &SqlitePool, id: Uuid) -> Result<JobResponse, AppEr
 pub async fn list_jobs(pool: &SqlitePool, limit: i64) -> Result<Vec<JobResponse>, AppError> {
     let rows = sqlx::query_as::<_, JobRow>(
         r#"
-        SELECT id, kind, status, library_id, source_type, source_id,
+        SELECT id, kind, status, library_id, parent_job_id, source_type, source_id,
                total_items, processed_items, success_items,
                skipped_items, failed_items, current_item, error_message, created_at,
                started_at, finished_at, updated_at

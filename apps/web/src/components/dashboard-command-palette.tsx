@@ -1,14 +1,13 @@
 import {
-  CopyCheck,
-  LayoutDashboard,
-  Library,
+  ClipboardList,
   ListMusic,
+  ListTodo,
   LogOut,
-  RadioTower,
   RefreshCw,
   Search,
   Settings,
   Trash2,
+  Workflow,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -24,14 +23,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 
-export type DashboardTab =
-  | "dashboard"
-  | "library"
-  | "tasks"
-  | "duplicates"
-  | "playback"
-  | "trash"
-  | "settings";
+export type DashboardTab = "library" | "songs" | "reviews" | "tasks" | "trash" | "settings";
 
 type DashboardCommandPaletteProps = {
   onNavigate: (tab: DashboardTab) => void;
@@ -40,13 +32,12 @@ type DashboardCommandPaletteProps = {
 };
 
 const destinations = [
-  { value: "dashboard" as const, label: "打开总览", icon: LayoutDashboard, shortcut: "⌃1" },
-  { value: "library" as const, label: "打开曲库", icon: Library, shortcut: "⌃2" },
-  { value: "duplicates" as const, label: "打开重复文件", icon: CopyCheck, shortcut: "⌃3" },
-  { value: "tasks" as const, label: "打开任务", icon: ListMusic, shortcut: "⌃4" },
-  { value: "playback" as const, label: "打开播放与歌单", icon: RadioTower, shortcut: "⌃5" },
-  { value: "trash" as const, label: "打开回收站", icon: Trash2, shortcut: "⌃6" },
-  { value: "settings" as const, label: "打开设置", icon: Settings, shortcut: "⌃7" },
+  { value: "library" as const, label: "打开曲库接入", icon: Workflow, shortcut: "⌃1" },
+  { value: "songs" as const, label: "打开歌曲列表", icon: ListMusic, shortcut: "⌃2" },
+  { value: "reviews" as const, label: "打开待处理", icon: ClipboardList, shortcut: "⌃3" },
+  { value: "tasks" as const, label: "打开任务", icon: ListTodo, shortcut: "⌃4" },
+  { value: "trash" as const, label: "打开回收站", icon: Trash2, shortcut: "⌃5" },
+  { value: "settings" as const, label: "打开设置", icon: Settings, shortcut: "⌃6" },
 ];
 
 export function DashboardCommandPalette({

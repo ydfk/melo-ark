@@ -4,7 +4,7 @@ import type {
   UpdateLibraryRequest,
   DashboardStats,
   Job,
-  LibraryRoot,
+  LibraryGroup,
   PathPreflight,
   TrackList,
   TrackFilter,
@@ -34,21 +34,30 @@ import type {
 
 export const getDashboardStats = () => alovaInstance.Get<DashboardStats>("/dashboard/stats");
 
-export const getLibraries = () => alovaInstance.Get<LibraryRoot[]>("/libraries");
+export const getLibraries = () => alovaInstance.Get<LibraryGroup[]>("/libraries");
 
 export const createLibrary = (request: CreateLibraryRequest) =>
-  alovaInstance.Post<LibraryRoot>("/libraries", request);
+  alovaInstance.Post<LibraryGroup>("/libraries", request);
 
 export const updateLibrary = (id: string, request: UpdateLibraryRequest) =>
-  alovaInstance.Patch<LibraryRoot>(`/libraries/${id}`, request);
+  alovaInstance.Patch<LibraryGroup>(`/libraries/${id}`, request);
 
 export const deleteLibrary = (id: string) => alovaInstance.Delete<void>(`/libraries/${id}`);
+
+export const deleteLibraryGroup = (id: string) =>
+  alovaInstance.Delete<void>(`/libraries/groups/${id}`);
 
 export const preflightLibraryPath = (path: string) =>
   alovaInstance.Post<PathPreflight>("/libraries/preflight", { path });
 
 export const getDirectories = (path: string) =>
   alovaInstance.Get<DirectoryListing>("/filesystem/directories", { params: { path } });
+
+export const createDirectory = (parentPath: string, name: string) =>
+  alovaInstance.Post<{ name: string; path: string; readable: boolean }>("/filesystem/directories", {
+    parentPath,
+    name,
+  });
 
 export const getRuntimeSettings = () => alovaInstance.Get<RuntimeSettings>("/settings");
 

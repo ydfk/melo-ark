@@ -472,10 +472,10 @@ pub async fn delete_playlist(state: &AppState, user_id: Uuid, id: Uuid) -> Resul
 }
 
 pub async fn best_media_id(state: &AppState, track_id: Uuid) -> Result<Uuid, AppError> {
-    sqlx::query_scalar("SELECT id FROM media_files WHERE track_id=? ORDER BY COALESCE(quality_score,0) DESC,file_size DESC LIMIT 1").bind(track_id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("曲目没有可播放文件".to_owned()))
+    sqlx::query_scalar("SELECT mf.id FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=? AND mf.available=1 AND l.role='managed' ORDER BY COALESCE(mf.quality_score,0) DESC,mf.file_size DESC LIMIT 1").bind(track_id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("曲目没有可播放的整理文件".to_owned()))
 }
 pub async fn load_media(state: &AppState, id: Uuid) -> Result<StreamTarget, AppError> {
-    sqlx::query_as::<_,StreamTarget>("SELECT mf.id,mf.track_id,l.path AS library_path,mf.relative_path,mf.extension,mf.file_size,mf.mtime_ms FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.id=?").bind(id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("媒体文件不存在".to_owned()))
+    sqlx::query_as::<_,StreamTarget>("SELECT mf.id,mf.track_id,l.path AS library_path,mf.relative_path,mf.extension,mf.file_size,mf.mtime_ms FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.id=? AND mf.available=1 AND l.role='managed'").bind(id).fetch_optional(&state.pool).await.map_err(AppError::internal)?.ok_or_else(||AppError::NotFound("整理文件不存在或暂不可用".to_owned()))
 }
 pub fn safe_path(target: &StreamTarget) -> Result<PathBuf, AppError> {
     let root = Path::new(&target.library_path)

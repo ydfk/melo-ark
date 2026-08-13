@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod duplicates;
 pub mod error;
+pub mod ingest;
 pub mod jobs;
 pub mod library;
 pub mod lyrics;
@@ -14,6 +15,7 @@ pub mod opensubsonic;
 pub mod organizer;
 pub mod playback;
 pub mod providers;
+pub mod review;
 pub mod routes;
 pub mod runtime_settings;
 pub mod scanner;
@@ -81,6 +83,8 @@ pub async fn build_app(config: &AppConfig) -> anyhow::Result<Router> {
             std::collections::HashMap::new(),
         )),
     };
+    ingest::resume_pending(state.clone()).await?;
+    review::resume_pending(state.clone()).await?;
     scanner::start_background_services(state.clone());
     let cleanup_state = state.clone();
     tokio::spawn(async move {

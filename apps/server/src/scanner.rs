@@ -23,7 +23,7 @@ use self::{
         emit_current, fetch_library, finish_cancelled, increment_total, record_item_failure,
         record_item_success, record_walk_error, upsert_running_item, wait_until_runnable,
     },
-    storage::{media_is_unchanged, reconcile_removed_files, upsert_media},
+    storage::{reconcile_removed_files, upsert_media},
 };
 
 pub use self::runtime::{refresh_watchers, start_background_services};
@@ -98,6 +98,7 @@ async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
     while let Some(entry) = receiver.recv().await {
         if !wait_until_runnable(&state, job_id).await? {
             finish_cancelled(&state, job_id).await?;
+            crate::ingest::cancel_queued_batch_for_scan(&state, job_id).await?;
             return Ok(());
         }
         match entry {
@@ -108,7 +109,8 @@ async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
     }
 
     reconcile_removed_files(&state, job_id, library_id).await?;
-    finish_scan(&state, job_id, library_id).await
+    finish_scan(&state, job_id, library_id).await?;
+    crate::ingest::start_queued_for_scan(state, job_id).await
 }
 
 async fn acquire_scan_slot(
@@ -269,14 +271,21 @@ async fn process_job_path(
         }
     };
     let stat = file_stat(&relative, &canonical, &metadata)?;
-    if media_is_unchanged(state, library.id, &stat).await? {
+    if let Some(media_id) = storage::unchanged_media_id(state, library.id, &stat).await? {
         sqlx::query(
-            "UPDATE media_files SET last_seen_scan_id = ?, updated_at = ? WHERE library_id = ? AND relative_path = ?",
+            "UPDATE media_files SET last_seen_scan_id = ?, available = 1, missing_since = NULL, updated_at = ? WHERE id = ?",
         )
         .bind(job_id)
         .bind(Utc::now())
-        .bind(library.id)
-        .bind(&relative)
+        .bind(media_id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+        sqlx::query(
+            "UPDATE review_items SET status = 'resolved', marked = 0, updated_at = ? WHERE kind = 'source_missing' AND media_file_id = ? AND status = 'pending'",
+        )
+        .bind(Utc::now())
+        .bind(media_id)
         .execute(&state.pool)
         .await
         .map_err(AppError::internal)?;
@@ -292,7 +301,17 @@ async fn process_job_path(
     let info = tokio::task::spawn_blocking(move || inspect_audio(&inspect_path, fallback_title))
         .await
         .map_err(AppError::internal)?;
-    upsert_media(state, job_id, library, &stat, info).await?;
+    let result = upsert_media(state, job_id, library, &stat, info).await?;
+    if result.created && library.auto_ingest_enabled {
+        crate::ingest::enqueue_new_media(
+            state.clone(),
+            job_id,
+            result.media_id,
+            library.id,
+            &relative,
+        )
+        .await?;
+    }
     record_item_success(state, job_id, &relative, false).await
 }
 

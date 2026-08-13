@@ -66,8 +66,14 @@ async fn context() -> TestContext {
         ai: AiConfig::default(),
         playback: PlaybackConfig::default(),
     };
+    let app = build_app(&config).await.expect("构建服务");
+    let pool = db::connect(&database_path).await.expect("连接测试数据库");
+    sqlx::query("UPDATE provider_settings SET enabled = 0")
+        .execute(&pool)
+        .await
+        .expect("关闭在线服务");
     TestContext {
-        app: build_app(&config).await.expect("构建服务"),
+        app,
         _temp: temp,
         database_path,
         source,
@@ -79,24 +85,8 @@ async fn context() -> TestContext {
 async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     let context = context().await;
     let token = authenticate(&context.app).await;
-    let source_library = create_library(
-        &context.app,
-        &token,
-        "来源",
-        &context.source,
-        "source",
-        true,
-    )
-    .await;
-    let managed_library = create_library(
-        &context.app,
-        &token,
-        "已整理",
-        &context.managed,
-        "managed",
-        true,
-    )
-    .await;
+    let (source_library, managed_library) =
+        create_library(&context.app, &token, &context.source, &context.managed).await;
     let scan = request(
         &context.app,
         "POST",
@@ -112,16 +102,12 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
         scan.1["id"].as_str().expect("任务 ID"),
     )
     .await;
+    wait_for_ingest_job(&context.app, &token).await;
 
     let pool = db::connect(&context.database_path)
         .await
         .expect("连接数据库");
-    let (media_uuid, _track_uuid) = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
-        "SELECT id, track_id FROM media_files LIMIT 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("媒体与曲目 ID");
+    let (media_uuid, _track_uuid, managed_media_path) = wait_for_managed_media(&pool).await;
     let media_id = media_uuid.to_string();
 
     let (status, tag_preview) = request(
@@ -182,7 +168,7 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(tag_job["kind"], "tag_edit");
     assert_eq!(tag_job["status"], "completed");
-    let tagged = Probe::open(context.source.join("03 - 晴天.wav"))
+    let tagged = Probe::open(&managed_media_path)
         .and_then(|probe| probe.read())
         .expect("读取写入后的 Tag");
     let tag = tagged
@@ -195,7 +181,7 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     let (status, rescan) = request(
         &context.app,
         "POST",
-        &format!("/api/libraries/{source_library}/scan"),
+        &format!("/api/libraries/{managed_library}/scan"),
         None,
         Some(&token),
     )
@@ -241,7 +227,8 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     assert_eq!(history[0]["kind"], "tag_edit");
     assert_eq!(history[0]["status"], "success");
     let normalized_text: String =
-        sqlx::query_scalar("SELECT normalized_text FROM track_search LIMIT 1")
+        sqlx::query_scalar("SELECT normalized_text FROM track_search WHERE track_id = ?")
+            .bind(current_track_uuid)
             .fetch_one(&pool)
             .await
             .expect("读取拼音辅助索引");
@@ -309,10 +296,7 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     );
     assert!(target.to_string_lossy().contains("/Z/周杰伦/"));
     assert!(target.is_file());
-    assert!(same_physical(
-        &context.source.join("03 - 晴天.wav"),
-        &target
-    ));
+    assert!(same_physical(&managed_media_path, &target));
 
     let managed_library_id = uuid::Uuid::parse_str(&managed_library).expect("目标曲库 UUID");
     let initial_target_scan: uuid::Uuid = sqlx::query_scalar(
@@ -371,13 +355,15 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     .await
     .expect("释放阻塞扫描任务");
     wait_for_job(&context.app, &token, &rescan_job_id.to_string()).await;
-    let managed_media_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE library_id = ?")
-            .bind(managed_library_id)
-            .fetch_one(&pool)
-            .await
-            .expect("读取撤销后的目标索引");
-    assert_eq!(managed_media_count, 0);
+    let managed_media_count: (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(CASE WHEN available = 0 THEN 1 ELSE 0 END), 0) FROM media_files WHERE library_id = ?",
+    )
+    .bind(managed_library_id)
+    .fetch_one(&pool)
+    .await
+    .expect("读取撤销后的目标索引");
+    assert_eq!(managed_media_count.0 - managed_media_count.1, 1);
+    assert!(managed_media_count.1 <= 1);
 
     fs::create_dir_all(target.parent().expect("冲突目标父目录")).expect("创建冲突目录");
     fs::write(&target, b"different file").expect("创建冲突文件");
@@ -418,7 +404,7 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(tag_undo["status"], "rolled_back");
-    let restored = Probe::open(context.source.join("03 - 晴天.wav"))
+    let restored = Probe::open(&managed_media_path)
         .and_then(|probe| probe.read())
         .expect("读取撤销后的 Tag");
     assert!(
@@ -433,15 +419,8 @@ async fn tag_and_hardlink_operations_require_preview_and_support_undo() {
 async fn trash_requires_preview_and_restores_without_overwrite() {
     let context = context().await;
     let token = authenticate(&context.app).await;
-    let library_id = create_library(
-        &context.app,
-        &token,
-        "可写来源",
-        &context.source,
-        "source",
-        true,
-    )
-    .await;
+    let (library_id, _) =
+        create_library(&context.app, &token, &context.source, &context.managed).await;
     let (_, scan) = request(
         &context.app,
         "POST",
@@ -451,14 +430,12 @@ async fn trash_requires_preview_and_restores_without_overwrite() {
     )
     .await;
     wait_for_job(&context.app, &token, scan["id"].as_str().expect("任务 ID")).await;
+    wait_for_ingest_job(&context.app, &token).await;
     let pool = db::connect(&context.database_path)
         .await
         .expect("连接数据库");
-    let media_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM media_files LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("媒体 ID")
-        .to_string();
+    let (media_uuid, _, managed_media_path) = wait_for_managed_media(&pool).await;
+    let media_id = media_uuid.to_string();
     let (status, preview) = request(
         &context.app,
         "POST",
@@ -484,7 +461,8 @@ async fn trash_requires_preview_and_restores_without_overwrite() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!source_path.exists());
+    assert!(source_path.exists());
+    assert!(!managed_media_path.exists());
     assert!(trash_path.exists());
     let (_, trash_job) = request(
         &context.app,
@@ -507,6 +485,7 @@ async fn trash_requires_preview_and_restores_without_overwrite() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(restored["status"], "rolled_back");
     assert!(source_path.exists());
+    assert!(managed_media_path.exists());
     assert!(!trash_path.exists());
 }
 
@@ -514,15 +493,8 @@ async fn trash_requires_preview_and_restores_without_overwrite() {
 async fn permanent_trash_purge_requires_preview_and_exact_confirmation() {
     let context = context().await;
     let token = authenticate(&context.app).await;
-    let library_id = create_library(
-        &context.app,
-        &token,
-        "永久清理来源",
-        &context.source,
-        "source",
-        true,
-    )
-    .await;
+    let (library_id, _) =
+        create_library(&context.app, &token, &context.source, &context.managed).await;
     let (_, scan) = request(
         &context.app,
         "POST",
@@ -532,13 +504,11 @@ async fn permanent_trash_purge_requires_preview_and_exact_confirmation() {
     )
     .await;
     wait_for_job(&context.app, &token, scan["id"].as_str().expect("任务 ID")).await;
+    wait_for_ingest_job(&context.app, &token).await;
     let pool = db::connect(&context.database_path)
         .await
         .expect("连接数据库");
-    let media_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM media_files LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("媒体 ID");
+    let (media_id, _, managed_media_path) = wait_for_managed_media(&pool).await;
     let (status, trash_preview) = request(
         &context.app,
         "POST",
@@ -604,7 +574,8 @@ async fn permanent_trash_purge_requires_preview_and_exact_confirmation() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(purged["status"], "completed");
     assert!(!trash_path.exists());
-    assert!(!context.source.join("03 - 晴天.wav").exists());
+    assert!(context.source.join("03 - 晴天.wav").exists());
+    assert!(!managed_media_path.exists());
     let (status, entries) = request(&context.app, "GET", "/api/trash", None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(entries[0]["purgeStatus"], "completed");
@@ -629,15 +600,8 @@ async fn permanent_trash_purge_rejects_symlinks() {
 
     let context = context().await;
     let token = authenticate(&context.app).await;
-    let library_id = create_library(
-        &context.app,
-        &token,
-        "符号链接来源",
-        &context.source,
-        "source",
-        true,
-    )
-    .await;
+    let (library_id, _) =
+        create_library(&context.app, &token, &context.source, &context.managed).await;
     let (_, scan) = request(
         &context.app,
         "POST",
@@ -647,13 +611,11 @@ async fn permanent_trash_purge_rejects_symlinks() {
     )
     .await;
     wait_for_job(&context.app, &token, scan["id"].as_str().expect("任务 ID")).await;
+    wait_for_ingest_job(&context.app, &token).await;
     let pool = db::connect(&context.database_path)
         .await
         .expect("连接数据库");
-    let media_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM media_files LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("媒体 ID");
+    let (media_id, _, _) = wait_for_managed_media(&pool).await;
     let (status, preview) = request(
         &context.app,
         "POST",
@@ -716,24 +678,57 @@ async fn permanent_trash_purge_rejects_symlinks() {
 async fn create_library(
     app: &Router,
     token: &str,
-    name: &str,
-    path: &Path,
-    role: &str,
-    writable: bool,
-) -> String {
+    source_path: &Path,
+    organized_path: &Path,
+) -> (String, String) {
     let (status, body) = request(
         app,
         "POST",
         "/api/libraries",
         Some(json!({
-            "name": name, "path": path, "role": role, "scanEnabled": true,
-            "watchEnabled": false, "writable": writable
+            "sourcePath": source_path, "organizedPath": organized_path,
+            "watchEnabled": false, "autoIngestEnabled": true
         })),
         Some(token),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    body["id"].as_str().expect("曲库 ID").to_owned()
+    (
+        body["sources"][0]["id"]
+            .as_str()
+            .expect("来源 ID")
+            .to_owned(),
+        body["organizedLibraryId"]
+            .as_str()
+            .expect("整理目录 ID")
+            .to_owned(),
+    )
+}
+
+async fn wait_for_managed_media(pool: &sqlx::SqlitePool) -> (uuid::Uuid, uuid::Uuid, PathBuf) {
+    for _ in 0..200 {
+        if let Some((media_id, track_id, library_path, relative_path)) =
+            sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String)>(
+                "SELECT mf.id, mf.track_id, l.path, mf.relative_path
+                 FROM media_files mf
+                 JOIN libraries l ON l.id = mf.library_id
+                 WHERE l.role = 'managed' AND mf.available = 1
+                 ORDER BY mf.created_at DESC
+                 LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await
+            .expect("查询整理媒体")
+        {
+            return (
+                media_id,
+                track_id,
+                PathBuf::from(library_path).join(relative_path),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("整理媒体未生成")
 }
 
 async fn authenticate(app: &Router) -> String {
@@ -767,6 +762,28 @@ async fn wait_for_job(app: &Router, token: &str, id: &str) {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("任务未结束")
+}
+
+async fn wait_for_ingest_job(app: &Router, token: &str) {
+    for _ in 0..200 {
+        let (_, jobs) = request(app, "GET", "/api/jobs?limit=100", None, Some(token)).await;
+        let Some(job) = jobs
+            .as_array()
+            .and_then(|items| items.iter().find(|job| job["kind"] == "ingest"))
+        else {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            continue;
+        };
+        if matches!(
+            job["status"].as_str(),
+            Some("completed" | "completed_with_errors" | "failed")
+        ) {
+            assert_ne!(job["status"], "failed", "接入任务失败：{job}");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("接入任务未结束")
 }
 
 async fn request(

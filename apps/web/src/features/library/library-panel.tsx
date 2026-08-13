@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FolderSearch, Plus } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { ArrowRight, FolderSearch, Plus, ScanSearch, Sparkles, WandSparkles } from "lucide-react";
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -19,90 +19,59 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { LibraryRootCard } from "@/features/library/library-root-card";
+import { LibraryGroupCard } from "@/features/library/library-root-card";
 import { DirectoryTreePicker } from "@/features/library/directory-tree-picker";
-import { TrackCatalog } from "@/features/library/track-catalog";
-import { InlineJobStatus } from "@/features/tasks/inline-job-status";
 import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
-import {
-  createLibrary,
-  createScrapeJob,
-  getTracks,
-  preflightLibraryPath,
-  scanLibrary,
-} from "@/lib/api/methods/library";
-import type { LibraryRoot, TrackFilter, TrackList } from "@/lib/api/types";
-import { usePlaybackStore, type QueueTrack } from "@/store/playback-store";
+import { createLibrary, preflightLibraryPath, scanLibrary } from "@/lib/api/methods/library";
+import type { LibraryGroup, LibrarySource } from "@/lib/api/types";
 
 const librarySchema = z.object({
-  path: z.string().trim().min(1, "请选择目录"),
-  role: z.enum(["source", "managed", "both"]),
+  sourcePath: z.string().trim().min(1, "请选择来源目录"),
+  organizedPath: z.string().trim().min(1, "请选择整理后目录"),
   watchEnabled: z.boolean(),
-  writable: z.boolean(),
+  autoIngestEnabled: z.boolean(),
 });
-
-const TrackWorkbench = lazy(() =>
-  import("@/features/library/track-workbench").then((module) => ({
-    default: module.TrackWorkbench,
-  }))
-);
-const BatchTagDialog = lazy(() =>
-  import("@/features/library/batch-tag-dialog").then((module) => ({
-    default: module.BatchTagDialog,
-  }))
-);
 
 type LibraryForm = z.infer<typeof librarySchema>;
 
 type LibraryPanelProps = {
-  libraries: LibraryRoot[];
-  refreshKey: number;
+  libraries: LibraryGroup[];
   onChanged: () => Promise<void>;
 };
 
-export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelProps) {
-  const { latestJob, registerJob } = useJobActivity();
+export function LibraryPanel({ libraries, onChanged }: LibraryPanelProps) {
+  const { registerJob } = useJobActivity();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [tracks, setTracks] = useState<TrackList>();
-  const [search, setSearch] = useState("");
-  const [committedSearch, setCommittedSearch] = useState("");
-  const [trackFilter, setTrackFilter] = useState<TrackFilter>();
-  const [page, setPage] = useState(1);
-  const [loadingTracks, setLoadingTracks] = useState(false);
-  const [selectedTrackId, setSelectedTrackId] = useState<string>();
-  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
-  const [batchOpen, setBatchOpen] = useState(false);
   const form = useForm<LibraryForm>({
     resolver: zodResolver(librarySchema),
     defaultValues: {
-      path: "",
-      role: "source",
+      sourcePath: "",
+      organizedPath: "",
       watchEnabled: false,
-      writable: false,
+      autoIngestEnabled: true,
     },
   });
 
-  useEffect(() => {
-    setLoadingTracks(true);
-    getTracks(page, 50, committedSearch, trackFilter)
-      .send()
-      .then(setTracks)
-      .catch(() => toast.error("加载曲目失败"))
-      .finally(() => setLoadingTracks(false));
-  }, [committedSearch, page, refreshKey, trackFilter]);
-
   const submit = form.handleSubmit(async (values) => {
     try {
-      const status = await preflightLibraryPath(values.path).send();
+      const [source, organized] = await Promise.all([
+        preflightLibraryPath(values.sourcePath).send(),
+        preflightLibraryPath(values.organizedPath).send(),
+      ]);
       await createLibrary({
-        ...values,
-        path: status.canonicalPath,
-        scanEnabled: true,
+        sourcePath: source.canonicalPath,
+        organizedPath: organized.canonicalPath,
+        watchEnabled: values.watchEnabled,
+        autoIngestEnabled: values.autoIngestEnabled,
       }).send();
       toast.success("曲库已添加");
-      form.reset({ path: "", role: "source", watchEnabled: false, writable: false });
+      form.reset({
+        sourcePath: "",
+        organizedPath: "",
+        watchEnabled: false,
+        autoIngestEnabled: true,
+      });
       setDialogOpen(false);
       await onChanged();
     } catch (error) {
@@ -110,87 +79,78 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
     }
   });
 
-  async function startScan(library: LibraryRoot) {
+  async function startScan(library: LibrarySource) {
     try {
       registerJob(await scanLibrary(library.id).send());
-      toast.success(`已开始扫描「${library.path}」`);
+      toast.success(`已开始扫描「${library.sourcePath}」`);
       await onChanged();
     } catch (error) {
       toast.error(error instanceof ApiError ? error.problem.detail : "无法创建扫描任务");
     }
   }
 
-  async function startBatchScrape() {
-    try {
-      registerJob(await createScrapeJob([...selectedTrackIds]).send());
-      toast.success(`已创建 ${selectedTrackIds.size} 首曲目的元数据匹配任务`);
-      setSelectedTrackIds(new Set());
-      await onChanged();
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.problem.detail : "无法创建元数据匹配任务");
-    }
-  }
-
-  function playTrack(trackId: string) {
-    const queue: QueueTrack[] =
-      tracks?.items.map((track) => ({
-        id: track.id,
-        mediaId: track.mediaId,
-        title: track.title,
-        artist: track.artist,
-        album: track.album,
-        durationMs: track.durationMs,
-      })) ?? [];
-    const track = queue.find((item) => item.id === trackId);
-    if (track) usePlaybackStore.getState().play(track, queue);
-  }
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">曲库</h1>
+          <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Ingest Flow</p>
+          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">曲库接入</h1>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus data-icon="inline-start" />
-              添加曲库
-            </Button>
-          </DialogTrigger>
+          {libraries.length ? (
+            <DialogTrigger asChild>
+              <Button>
+                <Plus data-icon="inline-start" />
+                添加曲库
+              </Button>
+            </DialogTrigger>
+          ) : null}
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>添加曲库</DialogTitle>
-              <DialogDescription>选择音乐目录并设置用途。</DialogDescription>
+              <DialogTitle>添加音乐目录</DialogTitle>
+              <DialogDescription>选择音乐来源和整理后的播放目录。</DialogDescription>
             </DialogHeader>
             <form id="library-form" onSubmit={submit}>
               <FieldGroup>
                 <Controller
                   control={form.control}
-                  name="path"
+                  name="sourcePath"
                   render={({ field }) => (
-                    <Field data-invalid={Boolean(form.formState.errors.path)}>
-                      <FieldLabel>目录</FieldLabel>
+                    <Field data-invalid={Boolean(form.formState.errors.sourcePath)}>
+                      <FieldLabel>来源目录</FieldLabel>
                       <DirectoryTreePicker value={field.value} onChange={field.onChange} />
-                      <FieldError errors={[form.formState.errors.path]} />
+                      <FieldError errors={[form.formState.errors.sourcePath]} />
                     </Field>
                   )}
                 />
                 <Controller
                   control={form.control}
-                  name="role"
+                  name="organizedPath"
                   render={({ field }) => (
-                    <Field>
-                      <FieldLabel>用途</FieldLabel>
-                      <ToggleGroup
-                        type="single"
-                        value={field.value}
-                        onValueChange={(value) => value && field.onChange(value)}
-                      >
-                        <ToggleGroupItem value="source">来源</ToggleGroupItem>
-                        <ToggleGroupItem value="managed">已整理</ToggleGroupItem>
-                        <ToggleGroupItem value="both">两者</ToggleGroupItem>
-                      </ToggleGroup>
+                    <Field data-invalid={Boolean(form.formState.errors.organizedPath)}>
+                      <FieldLabel>整理后目录</FieldLabel>
+                      <DirectoryTreePicker value={field.value} onChange={field.onChange} />
+                      <FieldDescription>播放、搜索和专辑只使用此目录中的文件。</FieldDescription>
+                      <FieldError errors={[form.formState.errors.organizedPath]} />
+                    </Field>
+                  )}
+                />
+                <Controller
+                  control={form.control}
+                  name="autoIngestEnabled"
+                  render={({ field }) => (
+                    <Field orientation="horizontal">
+                      <div className="flex-1">
+                        <FieldLabel htmlFor="auto-ingest-enabled">自动处理新增音乐</FieldLabel>
+                        <FieldDescription>
+                          扫描到新增文件后创建硬链接并加入待处理。
+                        </FieldDescription>
+                      </div>
+                      <Switch
+                        id="auto-ingest-enabled"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
                     </Field>
                   )}
                 />
@@ -204,23 +164,6 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
                       </div>
                       <Switch
                         id="watch-enabled"
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </Field>
-                  )}
-                />
-                <Controller
-                  control={form.control}
-                  name="writable"
-                  render={({ field }) => (
-                    <Field orientation="horizontal">
-                      <div className="flex-1">
-                        <FieldLabel htmlFor="library-writable">允许后续写入</FieldLabel>
-                        <FieldDescription>只声明能力，不会在扫描时修改文件。</FieldDescription>
-                      </div>
-                      <Switch
-                        id="library-writable"
                         checked={field.value}
                         onCheckedChange={field.onChange}
                       />
@@ -246,11 +189,21 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
         </Dialog>
       </div>
 
+      <section className="grid gap-2 rounded-2xl border bg-card/60 p-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] sm:items-center">
+        <FlowStep icon={FolderSearch} label="添加目录" />
+        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
+        <FlowStep icon={ScanSearch} label="扫描新增" />
+        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
+        <FlowStep icon={WandSparkles} label="硬链接整理" />
+        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
+        <FlowStep icon={Sparkles} label="候选与待处理" />
+      </section>
+
       {libraries.length ? (
-        <section className="grid gap-4 lg:grid-cols-2">
+        <section className="grid gap-4">
           {libraries.map((library) => (
-            <LibraryRootCard
-              key={library.id}
+            <LibraryGroupCard
+              key={library.organizedLibraryId ?? library.sources[0]?.id}
               library={library}
               onScan={startScan}
               onChanged={onChanged}
@@ -258,54 +211,25 @@ export function LibraryPanel({ libraries, refreshKey, onChanged }: LibraryPanelP
           ))}
         </section>
       ) : (
-        <Alert>
+        <Alert className="flex min-h-52 flex-col items-center justify-center gap-4 text-center">
           <FolderSearch />
           <AlertTitle>尚未添加曲库</AlertTitle>
-          <AlertDescription>添加一个音乐目录即可开始扫描。</AlertDescription>
+          <AlertDescription>选择来源目录和整理后目录即可开始。</AlertDescription>
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus data-icon="inline-start" />
+            添加第一个曲库
+          </Button>
         </Alert>
       )}
+    </div>
+  );
+}
 
-      <InlineJobStatus job={latestJob("workspace", "library", "scrape")} />
-
-      <TrackCatalog
-        tracks={tracks}
-        loading={loadingTracks}
-        search={search}
-        filter={trackFilter}
-        page={page}
-        selected={selectedTrackIds}
-        onSearchChange={setSearch}
-        onSearch={() => {
-          setPage(1);
-          setCommittedSearch(search.trim());
-        }}
-        onFilterChange={(value) => {
-          setPage(1);
-          setTrackFilter(value);
-          setSelectedTrackIds(new Set());
-        }}
-        onPageChange={setPage}
-        onSelectionChange={setSelectedTrackIds}
-        onOpenTrack={setSelectedTrackId}
-        onPlayTrack={playTrack}
-        onBatchTag={() => setBatchOpen(true)}
-        onBatchScrape={() => void startBatchScrape()}
-      />
-      <Suspense fallback={null}>
-        <TrackWorkbench
-          trackId={selectedTrackId}
-          open={Boolean(selectedTrackId)}
-          libraries={libraries}
-          onOpenChange={(open) => !open && setSelectedTrackId(undefined)}
-          onChanged={onChanged}
-        />
-        <BatchTagDialog
-          trackIds={[...selectedTrackIds]}
-          open={batchOpen}
-          onOpenChange={setBatchOpen}
-          onChanged={onChanged}
-        />
-      </Suspense>
+function FlowStep({ icon: Icon, label }: { icon: typeof FolderSearch; label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium">
+      <Icon className="size-4 text-primary" />
+      {label}
     </div>
   );
 }
