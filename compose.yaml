@@ -16,7 +16,6 @@ services:
       MELOARK__JWT__SECRET: "${MELOARK_JWT_SECRET:-local-only-change-this-secret-32chars}"
     volumes:
       - ./data:/data
-      - "${MELOARK_SOURCE_PATH:-./fixtures/audio}:/music/source:rw"
-      - "${MELOARK_MANAGED_PATH:-./data/organized}:/music/organized:rw"
+      - "${MELOARK_PATH:-./music}:/music"
     tmpfs:
       - /tmp:size=64m,mode=1777

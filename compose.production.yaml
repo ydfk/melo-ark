@@ -13,7 +13,6 @@ services:
       MELOARK__JWT__SECRET: "${MELOARK_JWT_SECRET:?Set a random MELOARK_JWT_SECRET of at least 32 characters}"
     volumes:
       - "${MELOARK_DATA_PATH:-./data}:/data"
-      - "${MELOARK_SOURCE_PATH:-./music}:/music/source"
-      - "${MELOARK_MANAGED_PATH:-./organized}:/music/organized"
+      - "${MELOARK_PATH:-./music}:/music/source"
     tmpfs:
       - /tmp:size=64m,mode=1777
