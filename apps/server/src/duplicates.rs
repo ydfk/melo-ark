@@ -38,6 +38,8 @@ const fn yes() -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct GroupQuery {
     pub kind: Option<String>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -49,6 +51,15 @@ pub struct DuplicateGroup {
     pub reclaimable_bytes: i64,
     pub reason: String,
     pub members: Vec<DuplicateMember>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroupPage {
+    pub items: Vec<DuplicateGroup>,
+    pub page: i64,
+    pub per_page: i64,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow, ToSchema)]
@@ -784,10 +795,42 @@ async fn persist_groups(state: &AppState, groups: Vec<PendingGroup>) -> Result<(
 pub async fn list_groups(
     state: &AppState,
     kind: Option<&str>,
-) -> Result<Vec<DuplicateGroup>, AppError> {
+    page: i64,
+    per_page: i64,
+) -> Result<DuplicateGroupPage, AppError> {
+    let page = page.max(1);
+    let per_page = per_page.clamp(1, 100);
+    let offset = (page - 1) * per_page;
+    let total = if let Some(kind) = kind {
+        sqlx::query_scalar("SELECT COUNT(*) FROM duplicate_groups WHERE kind = ?")
+            .bind(kind)
+            .fetch_one(&state.pool)
+            .await
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM duplicate_groups")
+            .fetch_one(&state.pool)
+            .await
+    }
+    .map_err(AppError::internal)?;
     let group_rows = if let Some(kind) = kind {
-        sqlx::query_as::<_, (Uuid,String,i64,i64,String)>("SELECT id, kind, confidence, reclaimable_bytes, reason FROM duplicate_groups WHERE kind = ? ORDER BY reclaimable_bytes DESC, confidence DESC").bind(kind).fetch_all(&state.pool).await
-    } else { sqlx::query_as::<_, (Uuid,String,i64,i64,String)>("SELECT id, kind, confidence, reclaimable_bytes, reason FROM duplicate_groups ORDER BY reclaimable_bytes DESC, confidence DESC").fetch_all(&state.pool).await }.map_err(AppError::internal)?;
+        sqlx::query_as::<_, (Uuid, String, i64, i64, String)>(
+            "SELECT id, kind, confidence, reclaimable_bytes, reason FROM duplicate_groups WHERE kind = ? ORDER BY reclaimable_bytes DESC, confidence DESC, id DESC LIMIT ? OFFSET ?",
+        )
+        .bind(kind)
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await
+    } else {
+        sqlx::query_as::<_, (Uuid, String, i64, i64, String)>(
+            "SELECT id, kind, confidence, reclaimable_bytes, reason FROM duplicate_groups ORDER BY reclaimable_bytes DESC, confidence DESC, id DESC LIMIT ? OFFSET ?",
+        )
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await
+    }
+    .map_err(AppError::internal)?;
     let mut result = Vec::new();
     for row in group_rows {
         result.push(DuplicateGroup {
@@ -799,7 +842,12 @@ pub async fn list_groups(
             members: load_members(state, row.0).await?,
         });
     }
-    Ok(result)
+    Ok(DuplicateGroupPage {
+        items: result,
+        page,
+        per_page,
+        total,
+    })
 }
 
 pub async fn get_group(state: &AppState, id: Uuid) -> Result<DuplicateGroup, AppError> {

@@ -6,6 +6,7 @@ mod filesystem;
 mod jobs;
 mod libraries;
 mod lyrics;
+mod media_files;
 mod organizer;
 mod playback;
 mod reviews;
@@ -22,7 +23,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     ai::{AiDuplicateRequest, AiRecommendation, AiRerankRequest, AiStatus},
-    duplicates::{AnalyzeRequest, DuplicateGroup, DuplicateMember},
+    duplicates::{AnalyzeRequest, DuplicateGroup, DuplicateGroupPage, DuplicateMember},
     error::Problem,
     jobs::{JobEvent, JobLogPage, JobLogResponse, JobResponse},
     library::{
@@ -40,8 +41,9 @@ use crate::{
         UpdatePlaylistRequest,
     },
     review::{
-        ApplyReviewBatchRequest, ReviewBatchItem, ReviewBatchPreview, ReviewBatchPreviewRequest,
-        ReviewItem, ReviewPage, UpdateReviewRequest,
+        ApplyReviewBatchRequest, MarkedReviewCount, ReviewBatchItem, ReviewBatchItemPage,
+        ReviewBatchPreview, ReviewBatchPreviewRequest, ReviewItem, ReviewPage, ReviewSelection,
+        UpdateReviewRequest,
     },
     runtime_settings::{
         EditableSettings, InfrastructureSettings, SettingsResponse, UpdateSettingsRequest,
@@ -68,6 +70,7 @@ use self::{
     },
     catalog::{CatalogAlbum, CatalogLyrics, CatalogTrack, CatalogTrackPage},
     filesystem::{CreateDirectoryRequest, DirectoryEntry, DirectoryListing},
+    media_files::{ManagedMediaFilePage, ManagedMediaFileResponse},
     system::{
         DashboardRecentPlay, DashboardRecentTrack, DashboardStatsResponse, FormatDistribution,
         HealthResponse,
@@ -112,6 +115,7 @@ use self::{
         jobs::resume,
         jobs::cancel,
         jobs::retry_failed,
+        media_files::list,
         tracks::list,
         tracks::get_one,
         tracks::files,
@@ -163,7 +167,9 @@ use self::{
         playback::delete_playlist,
         reviews::list,
         reviews::update,
+        reviews::clear_marks,
         reviews::preview_batch,
+        reviews::preview_items,
         reviews::apply_batch
     ),
     components(schemas(
@@ -201,6 +207,8 @@ use self::{
         JobLogResponse,
         JobLogPage,
         JobEvent,
+        ManagedMediaFileResponse,
+        ManagedMediaFilePage,
         TrackResponse,
         TrackListResponse,
         TrackDetailResponse,
@@ -243,6 +251,7 @@ use self::{
         LyricsWriteMode,
         AnalyzeRequest,
         DuplicateGroup,
+        DuplicateGroupPage,
         DuplicateMember,
         AiStatus,
         AiDuplicateRequest,
@@ -257,9 +266,12 @@ use self::{
         playback::PlayTokenResponse,
         ReviewItem,
         ReviewPage,
+        ReviewSelection,
+        MarkedReviewCount,
         UpdateReviewRequest,
         ReviewBatchPreviewRequest,
         ReviewBatchItem,
+        ReviewBatchItemPage,
         ReviewBatchPreview,
         ApplyReviewBatchRequest
     )),
@@ -320,6 +332,7 @@ pub fn router(state: AppState) -> Router {
         .merge(organizer::router())
         .merge(scraper::router())
         .merge(jobs::router())
+        .merge(media_files::router())
         .merge(tags::router())
         .merge(tracks::router())
         .merge(trash::router())

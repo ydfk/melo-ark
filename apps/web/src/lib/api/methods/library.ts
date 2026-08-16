@@ -7,6 +7,7 @@ import type {
   LibraryGroup,
   PathPreflight,
   TrackList,
+  ManagedMediaFilePage,
   TrackFilter,
   TrackDetail,
   MediaFile,
@@ -21,6 +22,7 @@ import type {
   LyricsSearchResponse,
   ProviderSetting,
   DuplicateGroup,
+  DuplicateGroupPage,
   AiStatus,
   AiRecommendation,
   PlayTokenResponse,
@@ -71,6 +73,16 @@ export const scanLibrary = (id: string) => alovaInstance.Post<Job>(`/libraries/$
 
 export const getTracks = (page: number, perPage: number, search: string, filter?: TrackFilter) =>
   alovaInstance.Get<TrackList>("/tracks", {
+    params: { page, perPage, search: search || undefined, filter },
+  });
+
+export const getManagedMediaFiles = (
+  page: number,
+  perPage: number,
+  search: string,
+  filter?: TrackFilter
+) =>
+  alovaInstance.Get<ManagedMediaFilePage>("/media-files", {
     params: { page, perPage, search: search || undefined, filter },
   });
 
@@ -196,8 +208,14 @@ export const analyzeDuplicates = (mediaIds: string[] = []) =>
     calculateFingerprint: true,
   });
 
-export const getDuplicateGroups = (kind?: DuplicateGroup["kind"]) =>
-  alovaInstance.Get<DuplicateGroup[]>("/duplicates/groups", { params: { kind } });
+export const getDuplicateGroups = (
+  kind: DuplicateGroup["kind"] | undefined,
+  page: number,
+  perPage = 25
+) =>
+  alovaInstance.Get<DuplicateGroupPage>("/duplicates/groups", {
+    params: { kind, page, perPage },
+  });
 
 export const getAiStatus = () => alovaInstance.Get<AiStatus>("/ai/status");
 

@@ -16,6 +16,12 @@ pub struct JobResponse {
     pub parent_job_id: Option<Uuid>,
     pub source_type: Option<String>,
     pub source_id: Option<String>,
+    pub source_path: Option<String>,
+    pub target_path: Option<String>,
+    pub internal: bool,
+    pub phase: Option<String>,
+    pub phase_processed_items: i64,
+    pub phase_total_items: Option<i64>,
     pub total_items: i64,
     pub processed_items: i64,
     pub success_items: i64,
@@ -40,6 +46,12 @@ struct JobRow {
     parent_job_id: Option<Uuid>,
     source_type: Option<String>,
     source_id: Option<String>,
+    source_path: Option<String>,
+    target_path: Option<String>,
+    internal: bool,
+    phase: Option<String>,
+    phase_processed_items: i64,
+    phase_total_items: Option<i64>,
     total_items: i64,
     processed_items: i64,
     success_items: i64,
@@ -80,6 +92,12 @@ impl JobRow {
             parent_job_id: self.parent_job_id,
             source_type: self.source_type,
             source_id: self.source_id,
+            source_path: self.source_path,
+            target_path: self.target_path,
+            internal: self.internal,
+            phase: self.phase,
+            phase_processed_items: self.phase_processed_items,
+            phase_total_items: self.phase_total_items,
             total_items: self.total_items,
             processed_items: self.processed_items,
             success_items: self.success_items,
@@ -157,22 +175,67 @@ pub async fn cleanup_expired_logs(pool: &SqlitePool) -> anyhow::Result<u64> {
 }
 
 pub async fn create_scan_job(state: &AppState, library_id: Uuid) -> Result<JobResponse, AppError> {
+    create_scan_job_with_context(state, library_id, None, false).await
+}
+
+pub async fn create_internal_scan_job(
+    state: &AppState,
+    library_id: Uuid,
+    parent_job_id: Uuid,
+) -> Result<JobResponse, AppError> {
+    let existing: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM jobs
+           WHERE kind = 'scan' AND library_id = ? AND parent_job_id = ? AND internal = 1
+             AND status IN ('queued', 'paused', 'interrupted')
+           ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(library_id)
+    .bind(parent_job_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    if let Some(id) = existing {
+        sqlx::query(
+            "UPDATE jobs SET status = 'queued', updated_at = ? WHERE id = ? AND status IN ('paused', 'interrupted')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+        let job = fetch_job(&state.pool, id).await?;
+        emit(state, job.clone());
+        return Ok(job);
+    }
+    create_scan_job_with_context(state, library_id, Some(parent_job_id), true).await
+}
+
+async fn create_scan_job_with_context(
+    state: &AppState,
+    library_id: Uuid,
+    parent_job_id: Option<Uuid>,
+    internal: bool,
+) -> Result<JobResponse, AppError> {
     let id = Uuid::new_v4();
     let now = Utc::now();
     let inserted = sqlx::query(
         r#"INSERT INTO jobs
-             (id, kind, status, library_id, source_type, source_id, created_at, updated_at)
-           SELECT ?, 'scan', 'queued', ?, 'library', ?, ?, ?
-           WHERE NOT EXISTS (
+             (id, kind, status, library_id, parent_job_id, source_type, source_id,
+              phase, phase_total_items, internal, created_at, updated_at)
+           SELECT ?, 'scan', 'queued', ?, ?, 'library', ?, 'scanning', NULL, ?, ?, ?
+           WHERE ? = 1 OR NOT EXISTS (
              SELECT 1 FROM jobs
              WHERE library_id = ? AND kind = 'scan' AND status = 'queued'
            )"#,
     )
     .bind(id)
     .bind(library_id)
+    .bind(parent_job_id)
     .bind(library_id.to_string())
+    .bind(internal)
     .bind(now)
     .bind(now)
+    .bind(internal)
     .bind(library_id)
     .execute(&state.pool)
     .await
@@ -201,7 +264,11 @@ pub async fn create_scan_job(state: &AppState, library_id: Uuid) -> Result<JobRe
         "queued",
         None,
         None,
-        "扫描任务已加入队列",
+        if internal {
+            "整理目录索引扫描已加入接入流程"
+        } else {
+            "扫描任务已加入队列"
+        },
     )
     .await?;
     emit(state, job.clone());
@@ -211,11 +278,24 @@ pub async fn create_scan_job(state: &AppState, library_id: Uuid) -> Result<JobRe
 pub async fn fetch_job(pool: &SqlitePool, id: Uuid) -> Result<JobResponse, AppError> {
     sqlx::query_as::<_, JobRow>(
         r#"
-        SELECT id, kind, status, library_id, parent_job_id, source_type, source_id,
-               total_items, processed_items, success_items,
-               skipped_items, failed_items, current_item, error_message, created_at,
-               started_at, finished_at, updated_at
-        FROM jobs WHERE id = ?
+        SELECT j.id, j.kind, j.status, j.library_id, j.parent_job_id,
+               j.source_type, j.source_id,
+               CASE WHEN j.kind = 'scan' AND l.role = 'managed' THEN NULL ELSE l.path END AS source_path,
+               CASE
+                 WHEN j.kind = 'scan' AND l.role = 'managed' THEN l.path
+                 WHEN j.kind = 'ingest' THEN (
+                   SELECT target.path FROM ingest_records ir
+                   JOIN libraries target ON target.id = ir.target_library_id
+                   WHERE ir.job_id = j.id LIMIT 1
+                 )
+                 ELSE NULL
+               END AS target_path,
+               j.internal, j.phase, j.phase_processed_items, j.phase_total_items,
+               j.total_items, j.processed_items, j.success_items,
+               j.skipped_items, j.failed_items, j.current_item, j.error_message,
+               j.created_at, j.started_at, j.finished_at, j.updated_at
+        FROM jobs j LEFT JOIN libraries l ON l.id = j.library_id
+        WHERE j.id = ?
         "#,
     )
     .bind(id)
@@ -229,11 +309,25 @@ pub async fn fetch_job(pool: &SqlitePool, id: Uuid) -> Result<JobResponse, AppEr
 pub async fn list_jobs(pool: &SqlitePool, limit: i64) -> Result<Vec<JobResponse>, AppError> {
     let rows = sqlx::query_as::<_, JobRow>(
         r#"
-        SELECT id, kind, status, library_id, parent_job_id, source_type, source_id,
-               total_items, processed_items, success_items,
-               skipped_items, failed_items, current_item, error_message, created_at,
-               started_at, finished_at, updated_at
-        FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?
+        SELECT j.id, j.kind, j.status, j.library_id, j.parent_job_id,
+               j.source_type, j.source_id,
+               CASE WHEN j.kind = 'scan' AND l.role = 'managed' THEN NULL ELSE l.path END AS source_path,
+               CASE
+                 WHEN j.kind = 'scan' AND l.role = 'managed' THEN l.path
+                 WHEN j.kind = 'ingest' THEN (
+                   SELECT target.path FROM ingest_records ir
+                   JOIN libraries target ON target.id = ir.target_library_id
+                   WHERE ir.job_id = j.id LIMIT 1
+                 )
+                 ELSE NULL
+               END AS target_path,
+               j.internal, j.phase, j.phase_processed_items, j.phase_total_items,
+               j.total_items, j.processed_items, j.success_items,
+               j.skipped_items, j.failed_items, j.current_item, j.error_message,
+               j.created_at, j.started_at, j.finished_at, j.updated_at
+        FROM jobs j LEFT JOIN libraries l ON l.id = j.library_id
+        WHERE j.internal = 0
+        ORDER BY j.created_at DESC, j.rowid DESC LIMIT ?
         "#,
     )
     .bind(limit.clamp(1, 200))
@@ -241,6 +335,34 @@ pub async fn list_jobs(pool: &SqlitePool, limit: i64) -> Result<Vec<JobResponse>
     .await
     .map_err(AppError::internal)?;
     Ok(rows.into_iter().map(JobRow::into_response).collect())
+}
+
+pub async fn update_phase(
+    state: &AppState,
+    id: Uuid,
+    phase: &str,
+    processed: i64,
+    total: Option<i64>,
+    current_item: Option<&str>,
+) -> Result<JobResponse, AppError> {
+    sqlx::query(
+        r#"UPDATE jobs
+           SET phase = ?, phase_processed_items = ?, phase_total_items = ?,
+               current_item = ?, updated_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(phase)
+    .bind(processed)
+    .bind(total)
+    .bind(current_item)
+    .bind(Utc::now())
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    let job = fetch_job(&state.pool, id).await?;
+    emit(state, job.clone());
+    Ok(job)
 }
 
 pub async fn set_status(

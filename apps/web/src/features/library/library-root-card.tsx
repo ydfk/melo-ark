@@ -192,8 +192,14 @@ export function LibraryGroupCard({
                 </div>
               </div>
               <div className="mt-3 space-y-2">
-                <InlineJobStatus job={latestJob("library", source.id, "scan")} />
-                <InlineJobStatus job={latestJob("library", source.id, "ingest")} />
+                <InlineJobStatus
+                  label="来源目录扫描"
+                  job={latestJob("library", source.id, "scan")}
+                />
+                <InlineJobStatus
+                  label="新增音乐整理"
+                  job={latestJob("library", source.id, "ingest")}
+                />
               </div>
             </div>
           ))}

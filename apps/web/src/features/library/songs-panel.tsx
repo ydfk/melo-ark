@@ -5,8 +5,8 @@ import { TrackCatalog } from "@/features/library/track-catalog";
 import { InlineJobStatus } from "@/features/tasks/inline-job-status";
 import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
-import { createScrapeJob, getTracks } from "@/lib/api/methods/library";
-import type { LibraryGroup, TrackFilter, TrackList } from "@/lib/api/types";
+import { createScrapeJob, getManagedMediaFiles } from "@/lib/api/methods/library";
+import type { LibraryGroup, ManagedMediaFilePage, TrackFilter } from "@/lib/api/types";
 import { usePlaybackStore, type QueueTrack } from "@/store/playback-store";
 
 const TrackWorkbench = lazy(() =>
@@ -28,7 +28,7 @@ type SongsPanelProps = {
 
 export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps) {
   const { latestJob, registerJob } = useJobActivity();
-  const [tracks, setTracks] = useState<TrackList>();
+  const [tracks, setTracks] = useState<ManagedMediaFilePage>();
   const [search, setSearch] = useState("");
   const [committedSearch, setCommittedSearch] = useState("");
   const [trackFilter, setTrackFilter] = useState<TrackFilter>();
@@ -41,7 +41,7 @@ export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps
 
   useEffect(() => {
     setLoadingTracks(true);
-    getTracks(page, perPage, committedSearch, trackFilter)
+    getManagedMediaFiles(page, perPage, committedSearch, trackFilter)
       .send()
       .then((result) => {
         const lastPage = Math.max(1, Math.ceil(result.total / result.perPage));
@@ -56,9 +56,17 @@ export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps
   }, [committedSearch, page, perPage, refreshKey, trackFilter]);
 
   async function startBatchScrape() {
+    const trackIds = [
+      ...new Set(
+        tracks?.items
+          .filter((file) => selectedTrackIds.has(file.mediaId))
+          .map((file) => file.trackId) ?? []
+      ),
+    ];
+    if (!trackIds.length) return;
     try {
-      registerJob(await createScrapeJob([...selectedTrackIds]).send());
-      toast.success(`已创建 ${selectedTrackIds.size} 首歌曲的元数据匹配任务`);
+      registerJob(await createScrapeJob(trackIds).send());
+      toast.success(`已创建 ${trackIds.length} 首歌曲的元数据匹配任务`);
       setSelectedTrackIds(new Set());
       await onChanged();
     } catch (error) {
@@ -66,20 +74,18 @@ export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps
     }
   }
 
-  function playTrack(trackId: string) {
+  function playTrack(mediaId: string) {
     const queue: QueueTrack[] =
       tracks?.items.map((track) => ({
-        id: track.id,
+        id: track.trackId,
         mediaId: track.mediaId,
         title: track.title,
         artist: track.artist,
         album: track.album,
         durationMs: track.durationMs,
       })) ?? [];
-    const track = queue.find((item) => item.id === trackId);
-    if (track && tracks?.items.find((item) => item.id === trackId)?.available) {
-      usePlaybackStore.getState().play(track, queue);
-    }
+    const track = queue.find((item) => item.mediaId === mediaId);
+    if (track) usePlaybackStore.getState().play(track, queue);
   }
 
   return (
@@ -109,7 +115,10 @@ export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps
           setTrackFilter(value);
           setSelectedTrackIds(new Set());
         }}
-        onPageChange={setPage}
+        onPageChange={(value) => {
+          setPage(value);
+          setSelectedTrackIds(new Set());
+        }}
         onPerPageChange={(value) => {
           setPage(1);
           setPerPage(value);
@@ -130,7 +139,7 @@ export function SongsPanel({ libraries, refreshKey, onChanged }: SongsPanelProps
           onChanged={onChanged}
         />
         <BatchTagDialog
-          trackIds={[...selectedTrackIds]}
+          mediaIds={[...selectedTrackIds]}
           open={batchOpen}
           onOpenChange={setBatchOpen}
           onChanged={onChanged}

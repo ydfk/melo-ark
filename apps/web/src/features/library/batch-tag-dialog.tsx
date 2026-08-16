@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError } from "@/lib/api";
-import { applyTags, getTrackFiles, previewTags, undoTags } from "@/lib/api/methods/library";
+import { applyTags, previewTags, undoTags } from "@/lib/api/methods/library";
 import type { Operation, TagField, TagTransform } from "@/lib/api/types";
 import { OperationPreview } from "@/features/library/operation-preview";
 import { InlineJobStatus } from "@/features/tasks/inline-job-status";
@@ -31,18 +31,17 @@ import { useJobActivity } from "@/features/tasks/job-activity-context";
 type BatchMode = "set" | "find" | "regex" | "simplify" | "punctuation" | "filename" | "trim";
 
 export function BatchTagDialog({
-  trackIds,
+  mediaIds,
   open,
   onOpenChange,
   onChanged,
 }: {
-  trackIds: string[];
+  mediaIds: string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChanged: () => Promise<void>;
 }) {
   const { latestJob } = useJobActivity();
-  const [mediaIds, setMediaIds] = useState<string[]>([]);
   const [mode, setMode] = useState<BatchMode>("set");
   const [field, setField] = useState<TagField>("artists");
   const [value, setValue] = useState("");
@@ -51,19 +50,8 @@ export function BatchTagDialog({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
-    setOperation(undefined);
-    Promise.all(trackIds.map((id) => getTrackFiles(id).send()))
-      .then((groups) =>
-        setMediaIds(
-          groups
-            .flat()
-            .filter((file) => file.libraryWritable)
-            .map((file) => file.id)
-        )
-      )
-      .catch(showError);
-  }, [open, trackIds]);
+    if (open) setOperation(undefined);
+  }, [open]);
 
   async function createPreview() {
     if (!mediaIds.length) return;
@@ -141,8 +129,7 @@ export function BatchTagDialog({
         <DialogHeader>
           <DialogTitle>批量 Tag 编辑</DialogTitle>
           <DialogDescription>
-            已选择 {trackIds.length} 首逻辑曲目、{mediaIds.length} 个可写物理文件。先生成
-            变更预览，再确认写入。
+            已选择 {mediaIds.length} 个整理文件。先生成变更预览，再确认写入。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">

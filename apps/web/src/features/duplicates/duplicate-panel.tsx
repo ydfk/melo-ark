@@ -38,12 +38,21 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
   const { latestJob, registerJob } = useJobActivity();
   const [kind, setKind] = useState<(typeof kinds)[number]["value"]>("all");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [operation, setOperation] = useState<Operation>();
   const [busy, setBusy] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiStatus>();
-  const refresh = async (nextKind = kind) =>
-    setGroups(await getDuplicateGroups(nextKind === "all" ? undefined : nextKind).send());
+  const refresh = async (nextKind = kind, nextPage = page) => {
+    const result = await getDuplicateGroups(
+      nextKind === "all" ? undefined : nextKind,
+      nextPage
+    ).send();
+    setGroups(result.items);
+    setTotal(result.total);
+    setPage(result.page);
+  };
   useEffect(() => {
     void refresh();
     void getAiStatus().send().then(setAiStatus);
@@ -126,8 +135,9 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
         onValueChange={(value) => {
           const next = value as typeof kind;
           setKind(next);
+          setPage(1);
           setSelected(new Set());
-          void refresh(next);
+          void refresh(next, 1);
         }}
       >
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
@@ -240,6 +250,31 @@ export function DuplicatePanel({ onChanged }: { onChanged: () => Promise<void> }
         <p className="py-14 text-center text-sm text-muted-foreground">
           尚无重复组。分析完成后会按五个维度分别显示。
         </p>
+      ) : null}
+      {total > 25 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+          <span>
+            共 {total} 组 · 第 {page}/{Math.ceil(total / 25)} 页
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => void refresh(kind, page - 1)}
+            >
+              上一页
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= Math.ceil(total / 25)}
+              onClick={() => void refresh(kind, page + 1)}
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
       ) : null}
       <OperationPreview operation={operation} />
       <InlineJobStatus

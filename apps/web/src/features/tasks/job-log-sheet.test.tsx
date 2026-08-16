@@ -43,7 +43,8 @@ describe("JobLogSheet", () => {
       />
     );
 
-    expect(await screen.findByText("处理成功")).toBeInTheDocument();
+    expect(await screen.findByText("处理成功", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByText("处理成功", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("album/song.flac")).toBeInTheDocument();
   });
 });

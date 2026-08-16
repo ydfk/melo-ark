@@ -101,6 +101,8 @@ export default defineMock({
     albumCount: 0,
     trackCount: 0,
     mediaFileCount: 0,
+    availableManagedFileCount: 0,
+    pendingReviewCount: 0,
     totalBytes: 0,
     missingTagCount: 0,
     runningJobCount: 0,

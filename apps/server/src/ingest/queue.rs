@@ -41,8 +41,8 @@ pub async fn enqueue_new_media(
             sqlx::query(
                 r#"INSERT INTO jobs
                      (id, kind, status, library_id, parent_job_id, source_type, source_id,
-                      total_items, created_at, updated_at)
-                   VALUES (?, 'ingest', 'queued', ?, ?, 'library', ?, 0, ?, ?)"#,
+                      phase, phase_total_items, total_items, created_at, updated_at)
+                   VALUES (?, 'ingest', 'queued', ?, ?, 'library', ?, 'linking', 0, 0, ?, ?)"#,
             )
             .bind(job_id)
             .bind(source_library_id)
@@ -86,7 +86,9 @@ pub async fn enqueue_new_media(
     .execute(&mut *transaction)
     .await
     .map_err(AppError::internal)?;
-    sqlx::query("UPDATE jobs SET total_items = total_items + 1, updated_at = ? WHERE id = ?")
+    sqlx::query(
+        "UPDATE jobs SET total_items = total_items + 1, phase_total_items = COALESCE(phase_total_items, 0) + 1, updated_at = ? WHERE id = ?",
+    )
         .bind(now)
         .bind(job_id)
         .execute(&mut *transaction)
@@ -163,7 +165,7 @@ pub async fn resume_pending(state: AppState) -> Result<(), AppError> {
         r#"SELECT DISTINCT j.id FROM jobs j
            JOIN ingest_records ir ON ir.job_id = j.id
            WHERE ir.stage NOT IN ('completed', 'failed')
-             AND j.status IN ('queued', 'interrupted')"#,
+             AND j.status IN ('queued', 'paused', 'interrupted')"#,
     )
     .fetch_all(&state.pool)
     .await

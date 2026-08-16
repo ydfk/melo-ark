@@ -22,7 +22,9 @@ pub(super) async fn wait_until_runnable(state: &AppState, job_id: Uuid) -> Resul
 }
 
 pub(super) async fn increment_total(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
-    sqlx::query("UPDATE jobs SET total_items = total_items + 1, updated_at = ? WHERE id = ?")
+    sqlx::query(
+        "UPDATE jobs SET total_items = total_items + 1, phase_total_items = CASE WHEN phase_total_items IS NULL THEN NULL ELSE phase_total_items + 1 END, updated_at = ? WHERE id = ?",
+    )
         .bind(Utc::now())
         .bind(job_id)
         .execute(&state.pool)
@@ -91,7 +93,7 @@ pub(super) async fn record_item_success(
     .map_err(AppError::internal)?;
     if skipped {
         sqlx::query(
-            "UPDATE jobs SET processed_items = processed_items + 1, skipped_items = skipped_items + 1, updated_at = ? WHERE id = ?",
+            "UPDATE jobs SET processed_items = processed_items + 1, skipped_items = skipped_items + 1, phase_processed_items = phase_processed_items + 1, updated_at = ? WHERE id = ?",
         )
         .bind(Utc::now())
         .bind(job_id)
@@ -100,7 +102,7 @@ pub(super) async fn record_item_success(
         .map_err(AppError::internal)?;
     } else {
         sqlx::query(
-            "UPDATE jobs SET processed_items = processed_items + 1, success_items = success_items + 1, updated_at = ? WHERE id = ?",
+            "UPDATE jobs SET processed_items = processed_items + 1, success_items = success_items + 1, phase_processed_items = phase_processed_items + 1, updated_at = ? WHERE id = ?",
         )
         .bind(Utc::now())
         .bind(job_id)
@@ -141,7 +143,7 @@ pub(super) async fn record_item_failure(
     .await
     .map_err(AppError::internal)?;
     sqlx::query(
-        "UPDATE jobs SET processed_items = processed_items + 1, failed_items = failed_items + 1, updated_at = ? WHERE id = ?",
+        "UPDATE jobs SET processed_items = processed_items + 1, failed_items = failed_items + 1, phase_processed_items = phase_processed_items + 1, updated_at = ? WHERE id = ?",
     )
     .bind(Utc::now())
     .bind(job_id)

@@ -1,6 +1,5 @@
 import {
   CheckCheck,
-  CircleAlert,
   CopyCheck,
   FileQuestion,
   Filter,
@@ -8,7 +7,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,14 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -32,11 +23,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { ReviewPagination } from "@/features/reviews/review-pagination";
+import { ReviewPreviewDialog } from "@/features/reviews/review-preview-dialog";
 import { InlineJobStatus } from "@/features/tasks/inline-job-status";
 import { useJobActivity } from "@/features/tasks/job-activity-context";
 import { ApiError } from "@/lib/api";
 import {
   applyReviewBatch,
+  clearReviewMarks,
   getReviews,
   previewReviewBatch,
   updateReview,
@@ -84,26 +78,41 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
   const { latestJob, registerJob } = useJobActivity();
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [markedTotal, setMarkedTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
   const [status, setStatus] = useState<ReviewStatus>("pending");
   const [kind, setKind] = useState<"all" | ReviewKind>("all");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>();
   const [rule, setRule] = useState<ReviewBatchRule>("high_confidence_metadata");
   const [preview, setPreview] = useState<ReviewBatchPreview>();
-  const marked = useMemo(() => items.filter((item) => item.marked), [items]);
+  const [applying, setApplying] = useState(false);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const page = await getReviews({ status, kind: kind === "all" ? undefined : kind }).send();
-      setItems(page.items);
-      setTotal(page.total);
+      const result = await getReviews({
+        status,
+        kind: kind === "all" ? undefined : kind,
+        page,
+        perPage,
+      }).send();
+      const lastPage = Math.max(1, Math.ceil(result.total / result.perPage));
+      if (page > lastPage) {
+        setPage(lastPage);
+        return;
+      }
+      setItems(result.items);
+      setTotal(result.total);
+      setMarkedTotal(result.markedTotal);
     } catch (error) {
       showError(error, "无法加载待处理项目");
     } finally {
       setLoading(false);
     }
-  }, [kind, status]);
+  }, [kind, page, perPage, status]);
 
   useEffect(() => {
     void refresh();
@@ -113,11 +122,17 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
     setBusyId(item.id);
     try {
       await updateReview(item.id, request).send();
-      setItems((current) =>
-        current
-          .map((entry) => (entry.id === item.id ? { ...entry, ...request } : entry))
-          .filter((entry) => entry.status === status)
-      );
+      if (request.status) {
+        await refresh();
+        await onChanged();
+      } else {
+        setItems((current) =>
+          current.map((entry) => (entry.id === item.id ? { ...entry, ...request } : entry))
+        );
+        if (request.marked !== undefined && request.marked !== item.marked) {
+          setMarkedTotal((current) => Math.max(0, current + (request.marked ? 1 : -1)));
+        }
+      }
     } catch (error) {
       showError(error, "待处理状态更新失败");
     } finally {
@@ -126,13 +141,10 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
   }
 
   async function createPreview() {
-    if (!marked.length) return;
+    if (!markedTotal) return;
     try {
       setPreview(
-        await previewReviewBatch(
-          marked.map((item) => item.id),
-          rule
-        ).send()
+        await previewReviewBatch({ status, kind: kind === "all" ? undefined : kind }, rule).send()
       );
     } catch (error) {
       showError(error, "无法生成批量处理预览");
@@ -141,6 +153,7 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
 
   async function applyPreview() {
     if (!preview) return;
+    setApplying(true);
     try {
       registerJob(await applyReviewBatch(preview.id).send());
       toast.success("批量处理任务已创建");
@@ -149,6 +162,17 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
       await onChanged();
     } catch (error) {
       showError(error, "批量处理启动失败");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  async function clearMarks() {
+    try {
+      await clearReviewMarks(status, kind === "all" ? undefined : kind).send();
+      await refresh();
+    } catch (error) {
+      showError(error, "无法清除标记");
     }
   }
 
@@ -163,7 +187,13 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Select value={status} onValueChange={(value) => setStatus(value as ReviewStatus)}>
+          <Select
+            value={status}
+            onValueChange={(value) => {
+              setStatus(value as ReviewStatus);
+              setPage(1);
+            }}
+          >
             <SelectTrigger className="w-32" aria-label="处理状态">
               <SelectValue />
             </SelectTrigger>
@@ -173,7 +203,13 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
               <SelectItem value="ignored">已忽略</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={kind} onValueChange={(value) => setKind(value as typeof kind)}>
+          <Select
+            value={kind}
+            onValueChange={(value) => {
+              setKind(value as typeof kind);
+              setPage(1);
+            }}
+          >
             <SelectTrigger className="w-44" aria-label="问题类型">
               <Filter />
               <SelectValue />
@@ -198,7 +234,7 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
             <div className="flex items-center gap-3">
               <Layers3 className="size-5 text-primary" />
               <div>
-                <p className="font-medium">已标记 {marked.length} 项</p>
+                <p className="font-medium">当前筛选已标记 {markedTotal} 项</p>
                 <p className="text-xs text-muted-foreground">
                   选择规则后先预览，不会直接修改文件。
                 </p>
@@ -218,7 +254,12 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
                   ))}
                 </SelectContent>
               </Select>
-              <Button disabled={!marked.length} onClick={() => void createPreview()}>
+              {markedTotal ? (
+                <Button variant="ghost" onClick={() => void clearMarks()}>
+                  清除标记
+                </Button>
+              ) : null}
+              <Button disabled={!markedTotal} onClick={() => void createPreview()}>
                 生成处理预览
               </Button>
             </div>
@@ -247,69 +288,45 @@ export function ReviewPanel({ onChanged }: { onChanged: () => Promise<void> }) {
           <AlertDescription>新音乐扫描和分析后，需要判断的内容会集中到这里。</AlertDescription>
         </Alert>
       ) : null}
-      {!loading && items.length ? (
-        <p className="text-right text-xs text-muted-foreground">当前筛选共 {total} 项</p>
+      {!loading && total ? (
+        <ReviewPagination
+          page={page}
+          perPage={perPage}
+          total={total}
+          onPageChange={setPage}
+          onPerPageChange={(value) => {
+            setPerPage(value);
+            setPage(1);
+          }}
+        />
       ) : null}
 
       {status === "pending" && ["all", "duplicate", "quality_variant"].includes(kind) ? (
-        <details className="group rounded-2xl border bg-card/60 p-4">
+        <details
+          className="group rounded-2xl border bg-card/60 p-4"
+          onToggle={(event) => setDuplicatesOpen(event.currentTarget.open)}
+        >
           <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
             <CopyCheck className="size-4 text-primary" />
             重复与质量详情
             <span className="ml-auto text-xs text-muted-foreground group-open:hidden">展开</span>
           </summary>
-          <div className="mt-6 border-t pt-6">
-            <Suspense fallback={<Spinner />}>
-              <DuplicatePanel onChanged={onChanged} />
-            </Suspense>
-          </div>
+          {duplicatesOpen ? (
+            <div className="mt-6 border-t pt-6">
+              <Suspense fallback={<Spinner />}>
+                <DuplicatePanel onChanged={onChanged} />
+              </Suspense>
+            </div>
+          ) : null}
         </details>
       ) : null}
 
-      <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && setPreview(undefined)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>批量处理预览</DialogTitle>
-            <DialogDescription>仅可执行项目会进入任务，受阻项目保持原状。</DialogDescription>
-          </DialogHeader>
-          {preview ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <PreviewCount label="选择" value={preview.totalItems} />
-                <PreviewCount label="可执行" value={preview.eligibleItems} />
-                <PreviewCount label="受阻" value={preview.blockedItems} />
-              </div>
-              <div className="max-h-80 space-y-2 overflow-y-auto">
-                {preview.items.map((item) => (
-                  <div key={item.reviewId} className="rounded-xl border p-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      {item.eligible ? (
-                        <CheckCheck className="size-4 text-emerald-500" />
-                      ) : (
-                        <CircleAlert className="size-4 text-amber-500" />
-                      )}
-                      <span className="font-medium">{item.title}</span>
-                    </div>
-                    {item.reason ? (
-                      <p className="mt-1 whitespace-pre-line pl-6 text-xs text-muted-foreground">
-                        {item.reason}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreview(undefined)}>
-              取消
-            </Button>
-            <Button disabled={!preview?.eligibleItems} onClick={() => void applyPreview()}>
-              确认创建任务
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReviewPreviewDialog
+        preview={preview}
+        applying={applying}
+        onClose={() => setPreview(undefined)}
+        onApply={() => void applyPreview()}
+      />
     </div>
   );
 }
@@ -376,15 +393,6 @@ function ReviewRow({
 function formatConfidence(value: number) {
   const percentage = value <= 1 ? value * 100 : value;
   return `${Math.round(percentage)}%`;
-}
-
-function PreviewCount({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border bg-muted/40 p-3">
-      <p className="text-2xl font-semibold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
-    </div>
-  );
 }
 
 function showError(error: unknown, fallback: string) {

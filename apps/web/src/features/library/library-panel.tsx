@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, FolderSearch, Plus, ScanSearch, Sparkles, WandSparkles } from "lucide-react";
+import { FolderSearch, Plus } from "lucide-react";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -189,16 +189,6 @@ export function LibraryPanel({ libraries, onChanged }: LibraryPanelProps) {
         </Dialog>
       </div>
 
-      <section className="grid gap-2 rounded-2xl border bg-card/60 p-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] sm:items-center">
-        <FlowStep icon={FolderSearch} label="添加目录" />
-        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
-        <FlowStep icon={ScanSearch} label="扫描新增" />
-        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
-        <FlowStep icon={WandSparkles} label="硬链接整理" />
-        <ArrowRight className="mx-auto hidden size-4 text-muted-foreground sm:block" />
-        <FlowStep icon={Sparkles} label="候选与待处理" />
-      </section>
-
       {libraries.length ? (
         <section className="grid gap-4">
           {libraries.map((library) => (
@@ -221,15 +211,6 @@ export function LibraryPanel({ libraries, onChanged }: LibraryPanelProps) {
           </Button>
         </Alert>
       )}
-    </div>
-  );
-}
-
-function FlowStep({ icon: Icon, label }: { icon: typeof FolderSearch; label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium">
-      <Icon className="size-4 text-primary" />
-      {label}
     </div>
   );
 }

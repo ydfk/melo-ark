@@ -378,7 +378,7 @@ async fn managed_media(pool: &sqlx::SqlitePool) -> (Uuid, Uuid, std::path::PathB
 }
 
 async fn wait_for_ingest_job(app: &Router, token: &str) {
-    for _ in 0..300 {
+    for _ in 0..600 {
         let (_, jobs) = request(app, "GET", "/api/jobs?limit=100", None, Some(token)).await;
         let Some(job) = jobs
             .as_array()

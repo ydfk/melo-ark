@@ -146,7 +146,7 @@ async fn hash_fingerprint_and_quality_groups_are_separate_and_safe() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let groups = groups.as_array().expect("重复组");
+    let groups = groups["items"].as_array().expect("重复组");
     for kind in [
         "hardlink_alias",
         "binary_exact",

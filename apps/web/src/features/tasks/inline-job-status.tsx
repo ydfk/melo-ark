@@ -6,9 +6,22 @@ import { Progress } from "@/components/ui/progress";
 import type { Job } from "@/lib/api/types";
 
 import { useJobActivity } from "./job-activity-context";
-import { jobProgress, jobStatusLabels } from "./job-presenter";
+import {
+  jobCurrentStatusText,
+  jobProgress,
+  jobProgressText,
+  jobStatusLabels,
+} from "./job-presenter";
 
-export function InlineJobStatus({ job, className = "" }: { job?: Job; className?: string }) {
+export function InlineJobStatus({
+  job,
+  label,
+  className = "",
+}: {
+  job?: Job;
+  label?: string;
+  className?: string;
+}) {
   const { openLogs } = useJobActivity();
   if (!job) return null;
 
@@ -16,16 +29,15 @@ export function InlineJobStatus({ job, className = "" }: { job?: Job; className?
     <div className={`rounded-xl border bg-muted/20 p-3 ${className}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
+          {label ? <p className="mb-2 text-sm font-medium">{label}</p> : null}
           <div className="flex items-center gap-2">
             <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
               {jobStatusLabels[job.status]}
             </Badge>
-            <span className="font-mono text-xs text-muted-foreground">
-              {job.processedItems}/{job.totalItems}
-            </span>
+            <span className="font-mono text-xs text-muted-foreground">{jobProgressText(job)}</span>
           </div>
           <p className="mt-2 truncate text-xs text-muted-foreground">
-            {job.currentItem ?? job.errorMessage ?? "任务已记录"}
+            {job.currentItem ?? job.errorMessage ?? jobCurrentStatusText(job)}
           </p>
         </div>
         <Button type="button" variant="ghost" size="sm" onClick={() => openLogs(job.id)}>

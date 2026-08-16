@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::auth::require_user_id;
 use crate::{
-    duplicates::{self, AnalyzeRequest, DuplicateGroup, GroupQuery},
+    duplicates::{self, AnalyzeRequest, DuplicateGroup, DuplicateGroupPage, GroupQuery},
     error::AppError,
     jobs::JobResponse,
     state::AppState,
@@ -34,15 +34,21 @@ async fn analyze(
         Json(duplicates::create_job(&state, request).await?),
     ))
 }
-#[utoipa::path(get, path = "/api/duplicates/groups", tag = "duplicates", security(("bearerAuth" = [])), responses((status = 200, body = Vec<DuplicateGroup>)))]
+#[utoipa::path(get, path = "/api/duplicates/groups", tag = "duplicates", params(("kind" = Option<String>, Query), ("page" = Option<i64>, Query), ("perPage" = Option<i64>, Query)), security(("bearerAuth" = [])), responses((status = 200, body = DuplicateGroupPage)))]
 async fn groups(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<GroupQuery>,
-) -> Result<Json<Vec<DuplicateGroup>>, AppError> {
+) -> Result<Json<DuplicateGroupPage>, AppError> {
     require_user_id(&headers, &state)?;
     Ok(Json(
-        duplicates::list_groups(&state, query.kind.as_deref()).await?,
+        duplicates::list_groups(
+            &state,
+            query.kind.as_deref(),
+            query.page.unwrap_or(1),
+            query.per_page.unwrap_or(25),
+        )
+        .await?,
     ))
 }
 #[utoipa::path(get, path = "/api/duplicates/groups/{id}", tag = "duplicates", params(("id" = Uuid, Path)), security(("bearerAuth" = [])), responses((status = 200, body = DuplicateGroup)))]

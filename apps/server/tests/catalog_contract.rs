@@ -15,7 +15,7 @@ use meloark_server::{
     },
     db,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -175,6 +175,7 @@ async fn anonymous_token_streams_without_history_but_management_stays_protected(
     assert_eq!(history_count, 0);
     for (method, uri) in [
         ("GET", "/api/tracks"),
+        ("GET", "/api/media-files"),
         ("GET", "/api/favorites"),
         ("GET", "/api/playlists"),
     ] {
@@ -264,6 +265,113 @@ async fn source_media_is_never_exposed_as_playable_catalog_content() {
         .status(),
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn managed_file_list_returns_each_available_organized_file() {
+    let context = context().await;
+    let token = authenticate(&context.app).await;
+    let second_library = Uuid::new_v4();
+    let second_media = Uuid::new_v4();
+    let source_library = Uuid::new_v4();
+    let source_media = Uuid::new_v4();
+    let now = Utc::now();
+    for (id, path, role, writable) in [
+        (second_library, "/organized/second", "managed", 1),
+        (source_library, "/source/raw", "source", 0),
+    ] {
+        sqlx::query("INSERT INTO libraries (id, name, path, writable, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id)
+            .bind(path)
+            .bind(path)
+            .bind(writable)
+            .bind(role)
+            .bind(now)
+            .bind(now)
+            .execute(&context.pool)
+            .await
+            .expect("插入附加曲库");
+    }
+    for (id, library_id, relative_path, available) in [
+        (second_media, second_library, "变体/夜曲.flac", 1),
+        (source_media, source_library, "原始/夜曲.wav", 1),
+        (Uuid::new_v4(), second_library, "失效/夜曲.wav", 0),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO media_files (
+              id, track_id, library_id, relative_path, extension, file_size, mtime_ms,
+              device_id, inode, hardlink_count, metadata_readable, metadata_writable,
+              fingerprint_status, hash_status, available, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'flac', 2048, 1, 'fixture', ?, 1, 1, 1,
+              'pending', 'pending', ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(context.track_id)
+        .bind(library_id)
+        .bind(relative_path)
+        .bind(id.to_string())
+        .bind(available)
+        .bind(now)
+        .bind(now)
+        .execute(&context.pool)
+        .await
+        .expect("插入附加媒体");
+        sqlx::query("INSERT INTO track_search (track_id, media_id, title, artist, album, path, normalized_text) VALUES (?, ?, '夜曲', '周杰伦', '十一月的萧邦', ?, '夜曲 周杰伦 十一月的萧邦')")
+            .bind(context.track_id)
+            .bind(id)
+            .bind(relative_path)
+            .execute(&context.pool)
+            .await
+            .expect("插入附加搜索索引");
+    }
+
+    let (status, first) = authorized_json_request(
+        &context.app,
+        "GET",
+        "/api/media-files?page=1&perPage=1",
+        &token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["total"], 2);
+    assert_eq!(first["items"].as_array().map(Vec::len), Some(1));
+    let (status, second) = authorized_json_request(
+        &context.app,
+        "GET",
+        "/api/media-files?page=2&perPage=1",
+        &token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(first["items"][0]["mediaId"], second["items"][0]["mediaId"]);
+
+    let (status, searched) = authorized_json_request(
+        &context.app,
+        "GET",
+        "/api/media-files?search=%E5%8F%98%E4%BD%93",
+        &token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(searched["total"], 1);
+    assert_eq!(searched["items"][0]["mediaId"], second_media.to_string());
+    assert_eq!(
+        searched["items"][0]["trackId"],
+        context.track_id.to_string()
+    );
+    assert_eq!(searched["items"][0]["organizedPath"], "/organized/second");
+    for per_page in [25, 50, 100] {
+        let (status, page) = authorized_json_request(
+            &context.app,
+            "GET",
+            &format!("/api/media-files?perPage={per_page}"),
+            &token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(page["perPage"], per_page);
+        assert_eq!(page["total"], 2);
+    }
 }
 
 async fn insert_catalog_fixture(
@@ -366,6 +474,55 @@ async fn json_request(app: &Router, method: &str, uri: &str) -> (StatusCode, Val
         serde_json::from_slice(&bytes).expect("JSON 响应")
     };
     (status, body)
+}
+
+async fn authenticate(app: &Router) -> String {
+    let credentials = json!({"username": "admin", "password": "pass123"});
+    let setup = raw_json(app, "POST", "/api/auth/setup", &credentials.to_string()).await;
+    assert_eq!(setup.status(), StatusCode::CREATED);
+    let response = raw_json(app, "POST", "/api/auth/login", &credentials.to_string()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("读取登录响应")
+        .to_bytes();
+    serde_json::from_slice::<Value>(&body).expect("登录 JSON")["token"]
+        .as_str()
+        .expect("登录令牌")
+        .to_owned()
+}
+
+async fn authorized_json_request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("构建认证请求"),
+        )
+        .await
+        .expect("发送认证请求");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("读取认证响应")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("认证 JSON 响应"),
+    )
 }
 
 async fn raw(app: &Router, method: &str, uri: &str) -> axum::response::Response {

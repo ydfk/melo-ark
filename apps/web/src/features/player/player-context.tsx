@@ -157,14 +157,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     (track: CatalogTrack, tracks?: CatalogTrack[]) => {
       const target = toQueueTrack(track);
       const nextQueue = tracks?.map(toQueueTrack);
-      if (current?.id === track.id && audioRef.current?.src) {
+      if (current?.id === track.id && current.mediaId === track.mediaId && audioRef.current?.src) {
         void audioRef.current.play();
         return;
       }
       autoplayNext.current = true;
       usePlaybackStore.getState().play(target, nextQueue);
     },
-    [current?.id]
+    [current?.id, current?.mediaId]
   );
 
   const togglePlaying = useCallback(() => {

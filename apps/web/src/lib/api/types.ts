@@ -96,6 +96,8 @@ export type DashboardStats = {
   albumCount: number;
   trackCount: number;
   mediaFileCount: number;
+  availableManagedFileCount: number;
+  pendingReviewCount: number;
   totalBytes: number;
   missingTagCount: number;
   missingLyricsCount: number;
@@ -180,6 +182,12 @@ export type Job = {
   parentJobId?: string;
   sourceType?: string;
   sourceId?: string;
+  sourcePath?: string | null;
+  targetPath?: string | null;
+  internal?: boolean;
+  phase?: "discovering" | "scanning" | "linking" | "indexing" | "processing";
+  phaseProcessedItems?: number;
+  phaseTotalItems?: number | null;
   totalItems: number;
   processedItems: number;
   successItems: number;
@@ -239,6 +247,36 @@ export type TrackFilter = "missing_lyrics" | "missing_cover" | "missing_tags" | 
 
 export type TrackList = {
   items: Track[];
+  page: number;
+  perPage: number;
+  total: number;
+};
+
+export type ManagedMediaFile = {
+  mediaId: string;
+  trackId: string;
+  organizedLibraryId: string;
+  organizedPath: string;
+  relativePath: string;
+  path: string;
+  title: string;
+  artist: string;
+  album: string;
+  year?: number;
+  durationMs?: number;
+  codec?: string;
+  extension: string;
+  fileSize: number;
+  sampleRate?: number;
+  bitDepth?: number;
+  qualityScore?: number;
+  hasLyrics: boolean;
+  hasArtwork: boolean;
+  tagHealth: "complete" | "missing";
+};
+
+export type ManagedMediaFilePage = {
+  items: ManagedMediaFile[];
   page: number;
   perPage: number;
   total: number;
@@ -313,7 +351,10 @@ export type ReviewItem = {
 
 export type ReviewPage = {
   items: ReviewItem[];
+  page: number;
+  perPage: number;
   total: number;
+  markedTotal: number;
 };
 
 export type ReviewBatchRule =
@@ -329,12 +370,20 @@ export type ReviewBatchPreview = {
   totalItems: number;
   eligibleItems: number;
   blockedItems: number;
-  items: Array<{
-    reviewId: string;
-    title: string;
-    eligible: boolean;
-    reason?: string;
-  }>;
+};
+
+export type ReviewBatchItem = {
+  reviewId: string;
+  title: string;
+  eligible: boolean;
+  reason?: string;
+};
+
+export type ReviewBatchItemPage = {
+  items: ReviewBatchItem[];
+  page: number;
+  perPage: number;
+  total: number;
 };
 
 export type TagField =
@@ -506,6 +555,13 @@ export type DuplicateGroup = {
   reclaimableBytes: number;
   reason: string;
   members: DuplicateMember[];
+};
+
+export type DuplicateGroupPage = {
+  items: DuplicateGroup[];
+  page: number;
+  perPage: number;
+  total: number;
 };
 
 export type AiStatus = {

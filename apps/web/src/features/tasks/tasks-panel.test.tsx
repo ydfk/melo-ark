@@ -65,4 +65,54 @@ describe("TasksPanel", () => {
     await user.click(screen.getByRole("button", { name: "展开历史任务" }));
     expect(screen.getAllByRole("button", { name: "查看日志" })).toHaveLength(2);
   });
+
+  test("shows current ingest phase and hides internal index scans", () => {
+    render(
+      <TasksPanel
+        jobs={[
+          {
+            id: "ingest-1",
+            kind: "ingest",
+            status: "running",
+            totalItems: 1180,
+            processedItems: 0,
+            successItems: 20,
+            skippedItems: 0,
+            failedItems: 1,
+            sourcePath: "/music/source",
+            targetPath: "/music/organized",
+            phase: "linking",
+            phaseProcessedItems: 21,
+            phaseTotalItems: 1180,
+            createdAt: "2026-08-16T10:00:00Z",
+            updatedAt: "2026-08-16T10:01:00Z",
+          },
+          {
+            id: "internal-scan-1",
+            kind: "scan",
+            status: "running",
+            internal: true,
+            targetPath: "/music/organized",
+            phase: "scanning",
+            phaseProcessedItems: 300,
+            phaseTotalItems: 1180,
+            totalItems: 1180,
+            processedItems: 300,
+            successItems: 300,
+            skippedItems: 0,
+            failedItems: 0,
+            createdAt: "2026-08-16T10:01:00Z",
+            updatedAt: "2026-08-16T10:02:00Z",
+          },
+        ]}
+        onChanged={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("整理新增音乐")).toBeInTheDocument();
+    expect(screen.getByText("/music/source → /music/organized")).toBeInTheDocument();
+    expect(screen.getByText("创建整理硬链接 · 21/1180")).toBeInTheDocument();
+    expect(screen.queryByText("更新整理目录索引")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "查看日志" })).toHaveLength(1);
+  });
 });

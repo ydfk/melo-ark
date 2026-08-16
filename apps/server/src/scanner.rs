@@ -34,6 +34,16 @@ pub async fn enqueue_scan(state: AppState, library_id: Uuid) -> Result<JobRespon
     Ok(job)
 }
 
+pub async fn enqueue_internal_scan(
+    state: AppState,
+    library_id: Uuid,
+    parent_job_id: Uuid,
+) -> Result<JobResponse, AppError> {
+    let job = jobs::create_internal_scan_job(&state, library_id, parent_job_id).await?;
+    spawn_job(state, job.id);
+    Ok(job)
+}
+
 pub fn spawn_job(state: AppState, job_id: Uuid) {
     tokio::spawn(async move {
         if let Err(error) = run_scan(state.clone(), job_id).await {
@@ -79,12 +89,35 @@ pub fn spawn_job(state: AppState, job_id: Uuid) {
     });
 }
 
+pub async fn resume_pending(state: AppState) -> Result<(), AppError> {
+    let job_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM jobs WHERE kind = 'scan' AND internal = 0 AND status IN ('paused', 'interrupted')",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    for job_id in job_ids {
+        spawn_job(state.clone(), job_id);
+    }
+    Ok(())
+}
+
 async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
     let Some(_permit) = acquire_scan_slot(&state, job_id).await? else {
         return Ok(());
     };
 
     let job = jobs::fetch_job(&state.pool, job_id).await?;
+    jobs::update_phase(
+        &state,
+        job_id,
+        "scanning",
+        job.processed_items,
+        job.phase_total_items,
+        job.current_item.as_deref(),
+    )
+    .await?;
+    mirror_internal_progress(&state, job_id).await?;
     let library_id = job
         .library_id
         .ok_or_else(|| AppError::NotFound("任务关联的曲库已被删除".to_owned()))?;
@@ -106,6 +139,7 @@ async fn run_scan(state: AppState, job_id: Uuid) -> Result<(), AppError> {
             Err(message) => record_walk_error(&state, job_id, message).await?,
         }
         emit_current(&state, job_id).await;
+        mirror_internal_progress(&state, job_id).await?;
     }
 
     reconcile_removed_files(&state, job_id, library_id).await?;
@@ -158,19 +192,23 @@ async fn acquire_scan_slot(
             .await?;
             return Ok(Some(permit));
         }
-        drop(permit);
-
         let job = jobs::fetch_job(&state.pool, job_id).await?;
         match job.status.as_str() {
-            "queued" | "interrupted" => {
+            "queued" | "interrupted" | "paused" => {
+                drop(permit);
                 // 同一曲库已有扫描时保留后续任务，避免文件变更后的重扫请求被吞掉。
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }
+            "running" => return Ok(Some(permit)),
             "cancel_requested" => {
+                drop(permit);
                 finish_cancelled(state, job_id).await?;
                 return Ok(None);
             }
-            _ => return Ok(None),
+            _ => {
+                drop(permit);
+                return Ok(None);
+            }
         }
     }
 }
@@ -230,6 +268,8 @@ async fn process_job_path(
         .execute(&state.pool)
         .await
         .map_err(AppError::internal)?;
+    emit_current(state, job_id).await;
+    mirror_internal_progress(state, job_id).await?;
 
     let canonical = match path.canonicalize() {
         Ok(value) if value.starts_with(root) => value,
@@ -328,7 +368,7 @@ async fn finish_scan(state: &AppState, job_id: Uuid, library_id: Uuid) -> Result
     };
     let now = Utc::now();
     sqlx::query(
-        "UPDATE jobs SET status = ?, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE jobs SET status = ?, phase_processed_items = processed_items, phase_total_items = total_items, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(status)
     .bind(now)
@@ -345,6 +385,7 @@ async fn finish_scan(state: &AppState, job_id: Uuid, library_id: Uuid) -> Result
         .await
         .map_err(AppError::internal)?;
     emit_current(state, job_id).await;
+    mirror_internal_progress(state, job_id).await?;
     jobs::record_log(
         state,
         job_id,
@@ -353,6 +394,23 @@ async fn finish_scan(state: &AppState, job_id: Uuid, library_id: Uuid) -> Result
         None,
         None,
         "扫描任务处理完成",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn mirror_internal_progress(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
+    let job = jobs::fetch_job(&state.pool, job_id).await?;
+    let Some(parent_job_id) = job.parent_job_id.filter(|_| job.internal) else {
+        return Ok(());
+    };
+    jobs::update_phase(
+        state,
+        parent_job_id,
+        "indexing",
+        job.phase_processed_items,
+        job.phase_total_items,
+        job.current_item.as_deref(),
     )
     .await?;
     Ok(())

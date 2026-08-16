@@ -1,4 +1,4 @@
-use std::{fs, path::Path, time::Duration};
+use std::{collections::HashSet, fs, path::Path, time::Duration};
 
 use axum::{
     Router,
@@ -127,6 +127,123 @@ async fn authenticate(app: &Router) -> String {
     let (status, body) = request(app, "POST", "/api/auth/login", Some(credentials), None).await;
     assert_eq!(status, StatusCode::OK);
     body["token"].as_str().expect("JWT").to_owned()
+}
+
+#[tokio::test]
+async fn review_queue_is_paged_and_keeps_marks_across_pages() {
+    let context = test_context().await;
+    let token = authenticate(&context.app).await;
+    let pool = db::connect(&context.database_path)
+        .await
+        .expect("连接测试数据库");
+    let now = chrono::Utc::now();
+    let mut transaction = pool.begin().await.expect("开始批量写入");
+    let mut ids = Vec::with_capacity(5_000);
+    for index in 0..5_000 {
+        let id = uuid::Uuid::new_v4();
+        ids.push(id);
+        sqlx::query(
+            r#"INSERT INTO review_items
+                 (id, kind, status, marked, title, detail, subject_key, payload_json,
+                  created_at, updated_at)
+               VALUES (?, 'missing_lyrics', 'pending', 0, ?, '没有歌词', ?, '{}', ?, ?)"#,
+        )
+        .bind(id)
+        .bind(format!("测试音乐 {index}"))
+        .bind(format!("review-{index}"))
+        .bind(now)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .expect("写入待处理项");
+    }
+    transaction.commit().await.expect("提交批量写入");
+
+    for id in [ids[0], ids[3_000]] {
+        let (status, _) = request(
+            &context.app,
+            "PATCH",
+            &format!("/api/reviews/{id}"),
+            Some(json!({"marked": true})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let (status, first) = request(
+        &context.app,
+        "GET",
+        "/api/reviews?status=pending&kind=missing_lyrics&page=1&perPage=25",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"].as_array().expect("第一页").len(), 25);
+    assert_eq!(first["total"], 5_000);
+    assert_eq!(first["markedTotal"], 2);
+    assert_eq!(first["page"], 1);
+
+    let (status, second) = request(
+        &context.app,
+        "GET",
+        "/api/reviews?status=pending&kind=missing_lyrics&page=2&perPage=25",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let first_ids = first["items"]
+        .as_array()
+        .expect("第一页")
+        .iter()
+        .map(|item| item["id"].as_str().expect("待处理 ID"))
+        .collect::<HashSet<_>>();
+    assert!(
+        second["items"]
+            .as_array()
+            .expect("第二页")
+            .iter()
+            .all(|item| !first_ids.contains(item["id"].as_str().expect("待处理 ID")))
+    );
+
+    let (status, preview) = request(
+        &context.app,
+        "POST",
+        "/api/reviews/batch/preview",
+        Some(json!({
+            "selection": {"status": "pending", "kind": "missing_lyrics"},
+            "rule": "best_lyrics"
+        })),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["totalItems"], 2);
+    let preview_id = preview["id"].as_str().expect("预览 ID");
+    let (status, preview_page) = request(
+        &context.app,
+        "GET",
+        &format!("/api/reviews/batch/previews/{preview_id}/items?page=1&perPage=1"),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview_page}");
+    assert_eq!(preview_page["items"].as_array().expect("预览明细").len(), 1);
+    assert_eq!(preview_page["total"], 2);
+
+    let (status, cleared) = request(
+        &context.app,
+        "POST",
+        "/api/reviews/marks/clear",
+        Some(json!({"status": "pending", "kind": "missing_lyrics"})),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["count"], 2);
 }
 
 async fn wait_for_job(app: &Router, token: &str, id: &str) -> Value {
@@ -399,6 +516,44 @@ async fn expired_logs_are_cleaned_without_deleting_job_summary() {
 }
 
 #[tokio::test]
+async fn paused_job_keeps_its_state_and_phase_during_restart_recovery() {
+    let context = test_context().await;
+    let pool = db::connect(&context.database_path)
+        .await
+        .expect("连接测试数据库");
+    let job_id = uuid::Uuid::new_v4();
+    let now = chrono::Utc::now();
+    sqlx::query(
+        r#"INSERT INTO jobs
+           (id, kind, status, phase, phase_processed_items, phase_total_items,
+            total_items, processed_items, started_at, created_at, updated_at)
+           VALUES (?, 'ingest', 'paused', 'linking', 37, 100, 100, 12, ?, ?, ?)"#,
+    )
+    .bind(job_id)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("写入暂停任务");
+
+    jobs::recover_interrupted(&pool)
+        .await
+        .expect("恢复任务状态");
+    let restored: (String, String, i64, Option<i64>) = sqlx::query_as(
+        "SELECT status, phase, phase_processed_items, phase_total_items FROM jobs WHERE id = ?",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("读取恢复任务");
+    assert_eq!(
+        restored,
+        ("paused".to_owned(), "linking".to_owned(), 37, Some(100))
+    );
+}
+
+#[tokio::test]
 async fn library_groups_reuse_targets_and_create_directories_safely() {
     let context = test_context().await;
     let token = authenticate(&context.app).await;
@@ -604,6 +759,11 @@ async fn auto_ingest_groups_new_files_into_one_batch_and_one_target_scan() {
     assert_eq!(ingest["parentJobId"], scan_id);
     assert_eq!(ingest["totalItems"], 2);
     assert_eq!(ingest["successItems"], 2);
+    assert_eq!(ingest["phase"], "processing");
+    assert_eq!(ingest["phaseProcessedItems"], 2);
+    assert_eq!(ingest["phaseTotalItems"], 2);
+    assert_eq!(ingest["sourcePath"], context.library_path);
+    assert_eq!(ingest["targetPath"], context.managed_path);
 
     let ingest_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind = 'ingest'")
         .fetch_one(&pool)
@@ -622,6 +782,41 @@ async fn auto_ingest_groups_new_files_into_one_batch_and_one_target_scan() {
             .await
             .expect("读取整理目录扫描数量");
     assert_eq!((ingest_jobs, ingest_records, target_scans), (1, 2, 1));
+
+    let (target_scan_id, parent_job_id, internal): (uuid::Uuid, Option<uuid::Uuid>, i64) =
+        sqlx::query_as(
+            "SELECT id, parent_job_id, internal FROM jobs WHERE kind = 'scan' AND library_id = ?",
+        )
+        .bind(uuid::Uuid::parse_str(managed_id).expect("整理目录 UUID"))
+        .fetch_one(&pool)
+        .await
+        .expect("读取整理目录内部扫描");
+    assert_eq!(
+        parent_job_id,
+        Some(uuid::Uuid::parse_str(&ingest_id).expect("接入任务 UUID"))
+    );
+    assert_eq!(internal, 1);
+    let target_scan = wait_for_job(&context.app, &token, &target_scan_id.to_string()).await;
+    assert_eq!(target_scan["internal"], true);
+    assert_eq!(target_scan["parentJobId"], ingest_id);
+    assert_eq!(target_scan["phase"], "scanning");
+    assert_eq!(target_scan["phaseProcessedItems"], 2);
+    assert_eq!(target_scan["phaseTotalItems"], 2);
+    let (status, visible_jobs) =
+        request(&context.app, "GET", "/api/jobs", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        visible_jobs
+            .as_array()
+            .is_some_and(|items| items.iter().all(|job| job["internal"] == false))
+    );
+    assert!(
+        !visible_jobs
+            .as_array()
+            .expect("顶层任务列表")
+            .iter()
+            .any(|job| job["id"] == target_scan_id.to_string())
+    );
 
     let repeated = start_scan(&context.app, &token, source_id).await;
     assert_eq!(repeated["status"], "completed");

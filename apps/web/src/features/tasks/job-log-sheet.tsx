@@ -22,7 +22,7 @@ import { getJobLogs } from "@/lib/api/methods/jobs";
 import type { Job, JobLog } from "@/lib/api/types";
 import { formatDate } from "@/lib/format";
 
-import { jobKindLabels, jobStatusLabels } from "./job-presenter";
+import { jobDescription, jobProgressText, jobStatusLabels, jobTitle } from "./job-presenter";
 
 type LogLevel = "all" | JobLog["level"];
 
@@ -80,10 +80,16 @@ export function JobLogSheet({
       <SheetContent className="flex w-[94vw] flex-col sm:max-w-2xl">
         <SheetHeader className="pr-8">
           <div className="flex flex-wrap items-center gap-2">
-            <SheetTitle>{job ? (jobKindLabels[job.kind] ?? job.kind) : "任务日志"}</SheetTitle>
+            <SheetTitle>{job ? jobTitle(job) : "任务日志"}</SheetTitle>
             {job ? <Badge variant="secondary">{jobStatusLabels[job.status]}</Badge> : null}
           </div>
-          <SheetDescription>{job ? formatDate(job.createdAt) : ""}</SheetDescription>
+          <SheetDescription>
+            {job
+              ? [jobDescription(job), jobProgressText(job), formatDate(job.createdAt)]
+                  .filter(Boolean)
+                  .join(" · ")
+              : ""}
+          </SheetDescription>
         </SheetHeader>
         <div className="flex items-center justify-between gap-3 border-y py-3">
           <span className="text-sm text-muted-foreground">{mergedLogs.length} 条日志</span>
@@ -138,7 +144,7 @@ function LogRow({ log }: { log: JobLog }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span>{formatDate(log.createdAt)}</span>
-          <span>{log.eventType}</span>
+          <span>{jobLogEventLabels[log.eventType] ?? log.eventType}</span>
           {log.attempt ? <span>第 {log.attempt} 次</span> : null}
         </div>
         <p className="mt-1 text-sm">{log.message}</p>
@@ -149,3 +155,22 @@ function LogRow({ log }: { log: JobLog }) {
     </div>
   );
 }
+
+const jobLogEventLabels: Record<string, string> = {
+  queued: "已排队",
+  started: "已开始",
+  item_started: "开始处理文件",
+  hardlink_created: "已创建硬链接",
+  hardlink_exists: "硬链接已存在",
+  index_started: "开始更新整理索引",
+  index_completed: "整理索引已更新",
+  success: "处理成功",
+  skipped: "已跳过",
+  failed: "处理失败",
+  paused: "已暂停",
+  resumed: "已恢复",
+  cancelled: "已取消",
+  retry: "正在重试",
+  completed: "已完成",
+  completed_with_errors: "完成但有失败项",
+};

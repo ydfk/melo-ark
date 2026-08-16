@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 use crate::{error::AppError, jobs::JobResponse, state::AppState};
 
+mod pagination;
+
+pub use pagination::{clear_marks, list, list_preview_items};
+
 pub const RULE_METADATA: &str = "high_confidence_metadata";
 pub const RULE_LYRICS: &str = "best_lyrics";
 pub const RULE_ARTWORK: &str = "missing_artwork";
@@ -71,7 +75,23 @@ impl From<ReviewRecord> for ReviewItem {
 #[serde(rename_all = "camelCase")]
 pub struct ReviewPage {
     pub items: Vec<ReviewItem>,
+    pub page: i64,
+    pub per_page: i64,
     pub total: i64,
+    pub marked_total: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSelection {
+    pub status: String,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkedReviewCount {
+    pub count: i64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -84,11 +104,12 @@ pub struct UpdateReviewRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewBatchPreviewRequest {
-    pub review_ids: Vec<Uuid>,
+    pub review_ids: Option<Vec<Uuid>>,
+    pub selection: Option<ReviewSelection>,
     pub rule: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewBatchItem {
     pub review_id: Uuid,
@@ -105,7 +126,15 @@ pub struct ReviewBatchPreview {
     pub total_items: i64,
     pub eligible_items: i64,
     pub blocked_items: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewBatchItemPage {
     pub items: Vec<ReviewBatchItem>,
+    pub page: i64,
+    pub per_page: i64,
+    pub total: i64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -166,39 +195,6 @@ pub async fn upsert_issue(state: &AppState, issue: ReviewIssue<'_>) -> Result<Uu
         .map_err(AppError::internal)
 }
 
-pub async fn list(
-    state: &AppState,
-    status: Option<&str>,
-    kind: Option<&str>,
-    marked: Option<bool>,
-) -> Result<ReviewPage, AppError> {
-    if status.is_some_and(|value| !matches!(value, "pending" | "resolved" | "ignored")) {
-        return Err(AppError::BadRequest("待处理状态不合法".to_owned()));
-    }
-    let rows = sqlx::query_as::<_, ReviewRecord>(
-        r#"SELECT id, kind, status, marked, title, detail, track_id, media_file_id,
-             library_id, confidence, payload_json, created_at, updated_at
-           FROM review_items
-           WHERE (? IS NULL OR status = ?) AND (? IS NULL OR kind = ?)
-             AND (? IS NULL OR marked = ?)
-           ORDER BY marked DESC, updated_at DESC, rowid DESC"#,
-    )
-    .bind(status)
-    .bind(status)
-    .bind(kind)
-    .bind(kind)
-    .bind(marked)
-    .bind(marked)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(AppError::internal)?;
-    let total = i64::try_from(rows.len()).unwrap_or(i64::MAX);
-    Ok(ReviewPage {
-        items: rows.into_iter().map(Into::into).collect(),
-        total,
-    })
-}
-
 pub async fn update(
     state: &AppState,
     id: Uuid,
@@ -234,11 +230,12 @@ pub async fn preview_batch(
     request: ReviewBatchPreviewRequest,
 ) -> Result<ReviewBatchPreview, AppError> {
     validate_rule(&request.rule)?;
-    if request.review_ids.is_empty() {
+    let review_ids = pagination::resolve_preview_ids(state, &request).await?;
+    if review_ids.is_empty() {
         return Err(AppError::BadRequest("至少选择一个待处理项".to_owned()));
     }
-    let mut items = Vec::with_capacity(request.review_ids.len());
-    for id in &request.review_ids {
+    let mut items = Vec::with_capacity(review_ids.len());
+    for id in &review_ids {
         let record = fetch_record(state, *id).await?;
         let blocked_reason = eligibility(state, &record, &request.rule).await?;
         let preview_detail = if blocked_reason.is_none() && request.rule == RULE_DUPLICATES {
@@ -255,6 +252,7 @@ pub async fn preview_batch(
     }
     let id = Uuid::new_v4();
     let now = Utc::now();
+    let mut transaction = state.pool.begin().await.map_err(AppError::internal)?;
     sqlx::query(
         r#"INSERT INTO review_batch_previews
              (id, rule, review_ids_json, items_json, created_by, created_at, expires_at)
@@ -262,14 +260,32 @@ pub async fn preview_batch(
     )
     .bind(id)
     .bind(&request.rule)
-    .bind(serde_json::to_string(&request.review_ids).map_err(AppError::internal)?)
-    .bind(serde_json::to_string(&items).map_err(AppError::internal)?)
+    .bind(serde_json::to_string(&review_ids).map_err(AppError::internal)?)
+    .bind("[]")
     .bind(user_id)
     .bind(now)
     .bind(now + Duration::minutes(15))
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await
     .map_err(AppError::internal)?;
+    for (position, item) in items.iter().enumerate() {
+        sqlx::query(
+            r#"INSERT INTO review_batch_preview_items
+                 (id, preview_id, review_id, position, title, eligible, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(id)
+        .bind(item.review_id)
+        .bind(i64::try_from(position).unwrap_or(i64::MAX))
+        .bind(&item.title)
+        .bind(item.eligible)
+        .bind(&item.reason)
+        .execute(&mut *transaction)
+        .await
+        .map_err(AppError::internal)?;
+    }
+    transaction.commit().await.map_err(AppError::internal)?;
     Ok(preview_response(id, request.rule, items))
 }
 
@@ -301,8 +317,17 @@ pub async fn apply_batch(
     if applied_at.is_some() {
         return Err(AppError::Conflict("批量预览已经执行".to_owned()));
     }
-    let items: Vec<ReviewBatchItem> =
-        serde_json::from_str(&items_json).map_err(AppError::internal)?;
+    let mut items = sqlx::query_as::<_, ReviewBatchItem>(
+        r#"SELECT review_id, title, eligible, reason
+           FROM review_batch_preview_items WHERE preview_id = ? ORDER BY position"#,
+    )
+    .bind(request.preview_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    if items.is_empty() {
+        items = serde_json::from_str(&items_json).map_err(AppError::internal)?;
+    }
     let eligible: Vec<_> = items.into_iter().filter(|item| item.eligible).collect();
     if eligible.is_empty() {
         return Err(AppError::Conflict("没有可执行的待处理项".to_owned()));
@@ -799,7 +824,6 @@ fn preview_response(id: Uuid, rule: String, items: Vec<ReviewBatchItem>) -> Revi
         eligible_items: i64::try_from(eligible_items).unwrap_or(i64::MAX),
         blocked_items: i64::try_from(items.len().saturating_sub(eligible_items))
             .unwrap_or(i64::MAX),
-        items,
     }
 }
 

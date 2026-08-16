@@ -15,6 +15,7 @@ import { DashboardCommandPalette, type DashboardTab } from "@/components/dashboa
 import { ProfileMenu } from "@/components/profile-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ManagementMiniPlayer } from "@/features/player/management-mini-player";
+import { ManagementPipeline } from "@/features/dashboard/management-pipeline";
 import { JobActivityProvider } from "@/features/tasks/job-activity-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -176,6 +177,12 @@ export function DashboardPage({ user, onUserChanged, onLogout, onOpenPlayer }: D
                 设置
               </TabsTrigger>
             </TabsList>
+            <ManagementPipeline
+              stats={stats}
+              libraries={libraries}
+              activeTab={activeTab}
+              onNavigate={setActiveTab}
+            />
             <TabsContent value="library" className="mt-6">
               <Suspense fallback={<PanelLoading />}>
                 <LibraryPanel

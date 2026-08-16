@@ -27,6 +27,8 @@ pub struct DashboardStatsResponse {
     pub album_count: i64,
     pub track_count: i64,
     pub media_file_count: i64,
+    pub available_managed_file_count: i64,
+    pub pending_review_count: i64,
     pub total_bytes: i64,
     pub missing_tag_count: i64,
     pub missing_lyrics_count: i64,
@@ -38,6 +40,24 @@ pub struct DashboardStatsResponse {
     pub format_distribution: Vec<FormatDistribution>,
     pub recent_added: Vec<DashboardRecentTrack>,
     pub recent_played: Vec<DashboardRecentPlay>,
+}
+
+#[derive(Debug, FromRow)]
+struct DashboardCounts {
+    library_count: i64,
+    artist_count: i64,
+    album_count: i64,
+    track_count: i64,
+    media_file_count: i64,
+    total_bytes: i64,
+    missing_tag_count: i64,
+    running_job_count: i64,
+    missing_lyrics_count: i64,
+    missing_cover_count: i64,
+    possible_duplicate_count: i64,
+    exact_duplicate_count: i64,
+    available_managed_file_count: i64,
+    pending_review_count: i64,
 }
 
 #[derive(Debug, Serialize, FromRow, ToSchema)]
@@ -105,24 +125,26 @@ pub async fn dashboard_stats(
     headers: HeaderMap,
 ) -> Result<Json<DashboardStatsResponse>, AppError> {
     let user_id = require_user_id(&headers, &state)?;
-    let counts: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+    let counts = sqlx::query_as::<_, DashboardCounts>(
         r#"
         SELECT
-          (SELECT COUNT(*) FROM libraries WHERE role='managed'),
-          (SELECT COUNT(*) FROM artists a WHERE EXISTS (SELECT 1 FROM track_artists ta JOIN media_files mf ON mf.track_id=ta.track_id JOIN libraries l ON l.id=mf.library_id WHERE ta.artist_id=a.id AND mf.available=1 AND l.role='managed')),
-          (SELECT COUNT(*) FROM albums a WHERE EXISTS (SELECT 1 FROM tracks t JOIN media_files mf ON mf.track_id=t.id JOIN libraries l ON l.id=mf.library_id WHERE t.album_id=a.id AND mf.available=1 AND l.role='managed')),
-          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed')),
-          (SELECT COUNT(*) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed'),
-          COALESCE((SELECT SUM(mf.file_size) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed'), 0),
+          (SELECT COUNT(*) FROM libraries WHERE role='managed') AS library_count,
+          (SELECT COUNT(*) FROM artists a WHERE EXISTS (SELECT 1 FROM track_artists ta JOIN media_files mf ON mf.track_id=ta.track_id JOIN libraries l ON l.id=mf.library_id WHERE ta.artist_id=a.id AND mf.available=1 AND l.role='managed')) AS artist_count,
+          (SELECT COUNT(*) FROM albums a WHERE EXISTS (SELECT 1 FROM tracks t JOIN media_files mf ON mf.track_id=t.id JOIN libraries l ON l.id=mf.library_id WHERE t.album_id=a.id AND mf.available=1 AND l.role='managed')) AS album_count,
+          (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed')) AS track_count,
+          (SELECT COUNT(*) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed') AS media_file_count,
+          COALESCE((SELECT SUM(mf.file_size) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed'), 0) AS total_bytes,
           (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND l.role='managed') AND (t.title = '' OR t.title IS NULL OR t.album_id IS NULL OR NOT EXISTS
-            (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id))),
-          (SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running', 'paused', 'cancel_requested')),
+            (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id))) AS missing_tag_count,
+          (SELECT COUNT(*) FROM jobs WHERE internal = 0 AND status IN ('queued', 'running', 'paused', 'cancel_requested')) AS running_job_count,
           (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') AND NOT EXISTS
-            (SELECT 1 FROM lyrics l WHERE l.track_id = t.id AND l.active = 1)),
+            (SELECT 1 FROM lyrics l WHERE l.track_id = t.id AND l.active = 1)) AS missing_lyrics_count,
           (SELECT COUNT(*) FROM tracks t WHERE EXISTS (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id=t.id AND mf.available=1 AND ml.role='managed') AND NOT EXISTS
-            (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id = t.id AND mf.has_artwork = 1 AND ml.role='managed')),
-          (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'possible_duplicate'),
-          (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'binary_exact')
+            (SELECT 1 FROM media_files mf JOIN libraries ml ON ml.id=mf.library_id WHERE mf.track_id = t.id AND mf.has_artwork = 1 AND ml.role='managed')) AS missing_cover_count,
+          (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'possible_duplicate') AS possible_duplicate_count,
+          (SELECT COUNT(*) FROM duplicate_groups WHERE kind = 'binary_exact') AS exact_duplicate_count,
+          (SELECT COUNT(*) FROM media_files mf JOIN libraries l ON l.id=mf.library_id WHERE l.role='managed' AND mf.available=1) AS available_managed_file_count,
+          (SELECT COUNT(*) FROM review_items WHERE status='pending') AS pending_review_count
         "#,
     )
     .fetch_one(&state.pool)
@@ -169,18 +191,20 @@ pub async fn dashboard_stats(
     .map_err(AppError::internal)?;
 
     Ok(Json(DashboardStatsResponse {
-        library_count: counts.0,
-        artist_count: counts.1,
-        album_count: counts.2,
-        track_count: counts.3,
-        media_file_count: counts.4,
-        total_bytes: counts.5,
-        missing_tag_count: counts.6,
-        running_job_count: counts.7,
-        missing_lyrics_count: counts.8,
-        missing_cover_count: counts.9,
-        possible_duplicate_count: counts.10,
-        exact_duplicate_count: counts.11,
+        library_count: counts.library_count,
+        artist_count: counts.artist_count,
+        album_count: counts.album_count,
+        track_count: counts.track_count,
+        media_file_count: counts.media_file_count,
+        available_managed_file_count: counts.available_managed_file_count,
+        pending_review_count: counts.pending_review_count,
+        total_bytes: counts.total_bytes,
+        missing_tag_count: counts.missing_tag_count,
+        running_job_count: counts.running_job_count,
+        missing_lyrics_count: counts.missing_lyrics_count,
+        missing_cover_count: counts.missing_cover_count,
+        possible_duplicate_count: counts.possible_duplicate_count,
+        exact_duplicate_count: counts.exact_duplicate_count,
         recent_scan_at,
         format_distribution,
         recent_added,

@@ -34,6 +34,7 @@ async fn run_batch(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
     if items.is_empty() {
         return finish_batch(state, job_id).await;
     }
+    sync_linking_progress(state, job_id, None).await?;
     let target_library_id = items[0].target_library_id;
     let mut linked = Vec::new();
     for item in items {
@@ -47,24 +48,44 @@ async fn run_batch(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
                 mark_item_failed(state, job_id, &item, &error.to_string()).await?;
             }
         }
+        sync_linking_progress(state, job_id, Some(&item.item_key)).await?;
     }
     if linked.is_empty() {
         return finish_batch(state, job_id).await;
     }
-    let scan_job = crate::scanner::enqueue_scan(state.clone(), target_library_id).await?;
-    if let Err(error) = wait_for_scan(state, scan_job.id).await {
-        let message = error.to_string();
-        for item in &linked {
-            mark_item_failed(state, job_id, item, &message).await?;
+    crate::jobs::update_phase(state, job_id, "indexing", 0, None, None).await?;
+    crate::jobs::record_log(
+        state,
+        job_id,
+        "info",
+        "index_started",
+        None,
+        None,
+        "开始更新整理目录索引",
+    )
+    .await?;
+    let scan_job =
+        crate::scanner::enqueue_internal_scan(state.clone(), target_library_id, job_id).await?;
+    match wait_for_scan(state, scan_job.id).await {
+        Ok(true) => {}
+        Ok(false) => return finish_cancelled_batch(state, job_id).await,
+        Err(error) => {
+            let message = error.to_string();
+            for item in &linked {
+                mark_item_failed(state, job_id, item, &message).await?;
+            }
+            return finish_batch(state, job_id).await;
         }
-        return finish_batch(state, job_id).await;
     }
+    sync_processing_progress(state, job_id, None).await?;
     for item in linked {
         if !wait_until_runnable(state, job_id).await? {
             return finish_cancelled_batch(state, job_id).await;
         }
+        sync_processing_progress(state, job_id, Some(&item.item_key)).await?;
         if let Err(error) = process_linked_item(state, job_id, &item).await {
             mark_item_failed(state, job_id, &item, &error.to_string()).await?;
+            sync_processing_progress(state, job_id, Some(&item.item_key)).await?;
         }
     }
     finish_batch(state, job_id).await
@@ -243,18 +264,30 @@ async fn process_linked_item(
 }
 
 async fn claim_batch(state: &AppState, job_id: Uuid) -> Result<bool, AppError> {
-    let now = Utc::now();
-    let result = sqlx::query(
-        "UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('queued', 'interrupted')",
-    )
-    .bind(now)
-    .bind(now)
-    .bind(job_id)
-    .execute(&state.pool)
-    .await
-    .map_err(AppError::internal)?;
-    if result.rows_affected() == 0 {
-        return Ok(false);
+    loop {
+        let now = Utc::now();
+        let result = sqlx::query(
+            "UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('queued', 'interrupted')",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(job_id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+        if result.rows_affected() == 1 {
+            break;
+        }
+        let status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
+        match status.as_str() {
+            "paused" => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+            "running" => break,
+            _ => return Ok(false),
+        }
     }
     crate::jobs::record_log(
         state,
@@ -313,6 +346,7 @@ async fn claim_item(state: &AppState, job_id: Uuid, item: &BatchItem) -> Result<
         "开始处理新增音乐",
     )
     .await?;
+    crate::jobs::emit(state, crate::jobs::fetch_job(&state.pool, job_id).await?);
     Ok(())
 }
 
@@ -392,6 +426,60 @@ async fn finish_item(
         Some(item_key),
         None,
         "新增音乐接入完成",
+    )
+    .await?;
+    sync_processing_progress(state, job_id, None).await?;
+    Ok(())
+}
+
+async fn sync_linking_progress(
+    state: &AppState,
+    job_id: Uuid,
+    current_item: Option<&str>,
+) -> Result<(), AppError> {
+    let processed: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM ingest_records
+           WHERE job_id = ? AND (target_relative_path IS NOT NULL OR stage = 'failed')"#,
+    )
+    .bind(job_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(AppError::internal)?;
+    let total: i64 = sqlx::query_scalar("SELECT total_items FROM jobs WHERE id = ?")
+        .bind(job_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(AppError::internal)?;
+    crate::jobs::update_phase(
+        state,
+        job_id,
+        "linking",
+        processed,
+        Some(total),
+        current_item,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn sync_processing_progress(
+    state: &AppState,
+    job_id: Uuid,
+    current_item: Option<&str>,
+) -> Result<(), AppError> {
+    let (processed, total): (i64, i64) =
+        sqlx::query_as("SELECT processed_items, total_items FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
+    crate::jobs::update_phase(
+        state,
+        job_id,
+        "processing",
+        processed,
+        Some(total),
+        current_item,
     )
     .await?;
     Ok(())
@@ -477,13 +565,14 @@ async fn finish_batch(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
     };
     let now = Utc::now();
     sqlx::query(
-        "UPDATE jobs SET status = ?, processed_items = ?, success_items = ?, skipped_items = ?, failed_items = ?, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE jobs SET status = ?, processed_items = ?, success_items = ?, skipped_items = ?, failed_items = ?, phase = 'processing', phase_processed_items = ?, phase_total_items = total_items, current_item = NULL, finished_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(status)
     .bind(success + skipped + failed)
     .bind(success)
     .bind(skipped)
     .bind(failed)
+    .bind(success + skipped + failed)
     .bind(now)
     .bind(now)
     .bind(job_id)
@@ -550,11 +639,70 @@ async fn fail_batch(state: &AppState, job_id: Uuid, message: &str) -> Result<(),
     Ok(())
 }
 
-async fn wait_for_scan(state: &AppState, job_id: Uuid) -> Result<(), AppError> {
+async fn wait_for_scan(state: &AppState, job_id: Uuid) -> Result<bool, AppError> {
+    let parent_job_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT parent_job_id FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::internal)?;
     for _ in 0..2_400 {
         let job = crate::jobs::fetch_job(&state.pool, job_id).await?;
+        if let Some(parent_job_id) = parent_job_id {
+            let parent_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = ?")
+                .bind(parent_job_id)
+                .fetch_one(&state.pool)
+                .await
+                .map_err(AppError::internal)?;
+            match parent_status.as_str() {
+                "paused" if matches!(job.status.as_str(), "queued" | "running" | "interrupted") => {
+                    crate::jobs::set_status(
+                        state,
+                        job_id,
+                        &["queued", "running", "interrupted"],
+                        "paused",
+                    )
+                    .await?;
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+                "running" if job.status == "paused" => {
+                    crate::jobs::set_status(state, job_id, &["paused"], "running").await?;
+                }
+                "cancel_requested" | "cancelled" => {
+                    if job.status == "running" {
+                        crate::jobs::set_status(state, job_id, &["running"], "cancel_requested")
+                            .await?;
+                    } else if matches!(job.status.as_str(), "queued" | "paused" | "interrupted") {
+                        crate::jobs::set_status(
+                            state,
+                            job_id,
+                            &["queued", "paused", "interrupted"],
+                            "cancelled",
+                        )
+                        .await?;
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         match job.status.as_str() {
-            "completed" => return Ok(()),
+            "completed" => {
+                if let Some(parent_job_id) = parent_job_id {
+                    crate::jobs::record_log(
+                        state,
+                        parent_job_id,
+                        "info",
+                        "index_completed",
+                        None,
+                        None,
+                        &format!("整理目录索引已更新，共处理 {} 个文件", job.processed_items),
+                    )
+                    .await?;
+                }
+                return Ok(true);
+            }
             "completed_with_errors" | "failed" | "cancelled" => {
                 return Err(AppError::Conflict(format!(
                     "整理目标扫描未成功完成：{}",

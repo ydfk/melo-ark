@@ -19,7 +19,13 @@ import { cancelJob, pauseJob, resumeJob, retryFailedJob } from "@/lib/api/method
 import type { Job, JobStatus } from "@/lib/api/types";
 import { formatDate } from "@/lib/format";
 import { useJobActivity } from "./job-activity-context";
-import { jobKindLabels, jobProgress, jobStatusLabels } from "./job-presenter";
+import {
+  jobDescription,
+  jobProgress,
+  jobProgressText,
+  jobStatusLabels,
+  jobTitle,
+} from "./job-presenter";
 
 type TasksPanelProps = {
   jobs?: Job[];
@@ -60,7 +66,7 @@ export function TasksPanel({ jobs: providedJobs, onChanged }: TasksPanelProps) {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Persistent Jobs</p>
+        <p className="font-mono text-xs tracking-[0.2em] text-primary">任务活动</p>
         <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">任务中心</h1>
       </div>
 
@@ -150,9 +156,10 @@ function TaskRow({
       <div className="flex min-w-0 items-center gap-2">
         {leading}
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">
-            {label ?? jobKindLabels[job.kind] ?? job.kind}
-          </p>
+          <p className="truncate text-sm font-medium">{label ?? jobTitle(job)}</p>
+          {jobDescription(job) ? (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{jobDescription(job)}</p>
+          ) : null}
           <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(job.createdAt)}</p>
         </div>
       </div>
@@ -163,9 +170,7 @@ function TaskRow({
       </div>
       <div className="min-w-0 space-y-1.5">
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>
-            {job.processedItems}/{job.totalItems}
-          </span>
+          <span>{jobProgressText(job)}</span>
           <span>
             成功 {job.successItems} · 跳过 {job.skippedItems} · 失败 {job.failedItems}
           </span>
@@ -246,7 +251,7 @@ function TaskActions({
 function groupJobs(jobs: Job[]): TaskGroup[] {
   const groups = new Map<string, Job[]>();
   const order: string[] = [];
-  for (const job of jobs) {
+  for (const job of jobs.filter((item) => !item.internal)) {
     const key = job.kind === "ingest" && job.parentJobId ? `ingest:${job.parentJobId}` : job.id;
     if (!groups.has(key)) order.push(key);
     groups.set(key, [...(groups.get(key) ?? []), job]);

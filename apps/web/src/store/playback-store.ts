@@ -35,7 +35,7 @@ export const usePlaybackStore = create<PlaybackState>()(
       repeat: "off",
       play: (track, queue) => {
         const nextQueue = queue?.length ? queue : get().queue;
-        const existing = nextQueue.findIndex((item) => item.id === track.id);
+        const existing = nextQueue.findIndex((item) => item.mediaId === track.mediaId);
         if (existing >= 0) set({ queue: nextQueue, currentIndex: existing });
         else set({ queue: [...nextQueue, track], currentIndex: nextQueue.length });
       },

@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CoverArtwork } from "@/features/library/cover-artwork";
-import type { Track, TrackFilter, TrackList } from "@/lib/api/types";
+import type { ManagedMediaFile, ManagedMediaFilePage, TrackFilter } from "@/lib/api/types";
 import { formatBytes, formatDuration } from "@/lib/format";
 
 type ColumnKey =
@@ -95,7 +95,7 @@ const filters: Array<{ value: TrackFilter; label: string }> = [
 ];
 
 type TrackCatalogProps = {
-  tracks?: TrackList;
+  tracks?: ManagedMediaFilePage;
   loading: boolean;
   search: string;
   filter?: TrackFilter;
@@ -180,7 +180,7 @@ export function TrackCatalog(props: TrackCatalogProps) {
       <CardContent>
         {props.selected.size ? (
           <div className="mb-4 flex flex-col justify-between gap-3 rounded-xl border bg-primary/5 px-4 py-3 sm:flex-row sm:items-center">
-            <span className="text-sm">已选择 {props.selected.size} 首歌曲</span>
+            <span className="text-sm">已选择 {props.selected.size} 个整理文件</span>
             <div className="flex flex-wrap gap-2">
               <Button variant="ghost" size="sm" onClick={() => props.onSelectionChange(new Set())}>
                 清除
@@ -252,7 +252,7 @@ export function TrackCatalog(props: TrackCatalogProps) {
 
         <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-3">
-            <span>共 {props.tracks?.total ?? 0} 首歌曲</span>
+            <span>共 {props.tracks?.total ?? 0} 个整理文件</span>
             <span>
               第 {props.page} / {totalPages} 页
             </span>
@@ -260,13 +260,13 @@ export function TrackCatalog(props: TrackCatalogProps) {
               value={String(props.perPage)}
               onValueChange={(value) => props.onPerPageChange(Number(value))}
             >
-              <SelectTrigger className="h-8 w-[112px]" aria-label="每页歌曲数量">
+              <SelectTrigger className="h-8 w-[128px]" aria-label="每页整理文件数量">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {[25, 50, 100].map((value) => (
                   <SelectItem key={value} value={String(value)}>
-                    每页 {value} 首
+                    每页 {value} 个文件
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -326,13 +326,13 @@ function TrackTable(
           <TableRow>
             <TableHead className="w-10">
               <Checkbox
-                aria-label="选择当前页全部歌曲"
+                aria-label="选择当前页全部整理文件"
                 checked={
-                  Boolean(items.length) && items.every((track) => props.selected.has(track.id))
+                  Boolean(items.length) && items.every((track) => props.selected.has(track.mediaId))
                 }
                 onCheckedChange={(checked) =>
                   props.onSelectionChange(
-                    checked ? new Set(items.map((track) => track.id)) : new Set()
+                    checked ? new Set(items.map((track) => track.mediaId)) : new Set()
                   )
                 }
               />
@@ -349,15 +349,15 @@ function TrackTable(
         </TableHeader>
         <TableBody>
           {items.map((track) => (
-            <TableRow key={track.id} className="content-auto">
+            <TableRow key={track.mediaId} className="content-auto">
               <TableCell>
                 <Checkbox
                   aria-label={`选择 ${track.title}`}
-                  checked={props.selected.has(track.id)}
+                  checked={props.selected.has(track.mediaId)}
                   onCheckedChange={(checked) => {
                     const next = new Set(props.selected);
-                    if (checked) next.add(track.id);
-                    else next.delete(track.id);
+                    if (checked) next.add(track.mediaId);
+                    else next.delete(track.mediaId);
                     props.onSelectionChange(next);
                   }}
                 />
@@ -367,8 +367,7 @@ function TrackTable(
                   variant="ghost"
                   size="icon"
                   className="size-8"
-                  disabled={!track.available}
-                  onClick={() => props.onPlayTrack(track.id)}
+                  onClick={() => props.onPlayTrack(track.mediaId)}
                   aria-label={`播放 ${track.title}`}
                 >
                   <Play />
@@ -389,15 +388,10 @@ function TrackTable(
                   <Button
                     variant="link"
                     className="h-auto max-w-full justify-start truncate p-0 text-foreground"
-                    onClick={() => props.onOpenTrack(track.id)}
+                    onClick={() => props.onOpenTrack(track.trackId)}
                   >
                     {track.title}
                   </Button>
-                  {!track.available ? (
-                    <Badge variant="destructive" className="ml-2">
-                      文件不可用
-                    </Badge>
-                  ) : null}
                 </TableCell>
               ) : null}
               {visible.has("artist") ? <TableCell>{track.artist}</TableCell> : null}
@@ -406,11 +400,6 @@ function TrackTable(
               {visible.has("format") ? (
                 <TableCell>
                   <Badge variant="secondary">{track.extension.toUpperCase()}</Badge>
-                  {track.variantCount > 1 ? (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      ×{track.variantCount}
-                    </span>
-                  ) : null}
                 </TableCell>
               ) : null}
               {visible.has("quality") ? (
@@ -420,7 +409,7 @@ function TrackTable(
                 <TableCell className="font-mono">{formatDuration(track.durationMs)}</TableCell>
               ) : null}
               {visible.has("size") ? (
-                <TableCell className="font-mono">{formatBytes(track.totalBytes)}</TableCell>
+                <TableCell className="font-mono">{formatBytes(track.fileSize)}</TableCell>
               ) : null}
               {visible.has("lyrics") ? (
                 <TableCell>
@@ -457,7 +446,7 @@ function TrackTable(
                 colSpan={columns.length + 2}
                 className="h-28 text-center text-muted-foreground"
               >
-                当前搜索或筛选没有歌曲。
+                当前搜索或筛选没有整理文件。
               </TableCell>
             </TableRow>
           ) : null}
@@ -472,7 +461,7 @@ type AlbumGroup = {
   title: string;
   artist: string;
   year?: number;
-  tracks: Track[];
+  tracks: ManagedMediaFile[];
   formats: string[];
 };
 
@@ -497,7 +486,7 @@ function AlbumGrid({
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {groups.map((group) => {
         const lead = group.tracks[0];
-        const selectedAll = group.tracks.every((track) => selected.has(track.id));
+        const selectedAll = group.tracks.every((track) => selected.has(track.mediaId));
         return (
           <article
             key={group.key}
@@ -517,8 +506,8 @@ function AlbumGrid({
                   onCheckedChange={(checked) => {
                     const next = new Set(selected);
                     for (const track of group.tracks) {
-                      if (checked) next.add(track.id);
-                      else next.delete(track.id);
+                      if (checked) next.add(track.mediaId);
+                      else next.delete(track.mediaId);
                     }
                     onSelectionChange(next);
                   }}
@@ -534,8 +523,7 @@ function AlbumGrid({
               <Button
                 size="icon"
                 className="absolute bottom-3 right-3 rounded-full opacity-0 shadow-lg transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                disabled={!lead.available}
-                onClick={() => onPlayTrack(lead.id)}
+                onClick={() => onPlayTrack(lead.mediaId)}
                 aria-label={`播放专辑 ${group.title}`}
               >
                 <Play />
@@ -545,7 +533,7 @@ function AlbumGrid({
               <Button
                 variant="link"
                 className="h-auto max-w-full justify-start truncate p-0 text-base font-semibold text-foreground"
-                onClick={() => onOpenTrack(lead.id)}
+                onClick={() => onOpenTrack(lead.trackId)}
               >
                 {group.title}
               </Button>
@@ -553,7 +541,7 @@ function AlbumGrid({
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>{group.year ?? "年份未知"}</span>
                 <span>·</span>
-                <span>{group.tracks.length} 首</span>
+                <span>{group.tracks.length} 个文件</span>
                 {group.formats.map((format) => (
                   <Badge key={format} variant="outline">
                     {format}
@@ -584,7 +572,7 @@ function CatalogSkeleton({ view }: { view: "table" | "albums" }) {
   );
 }
 
-function groupAlbums(tracks: Track[]): AlbumGroup[] {
+function groupAlbums(tracks: ManagedMediaFile[]): AlbumGroup[] {
   const groups = new Map<string, AlbumGroup>();
   for (const track of tracks) {
     const key = `${track.artist}\u0000${track.album}`;

@@ -161,13 +161,24 @@ pub async fn resume(
     Path(id): Path<Uuid>,
 ) -> Result<Json<JobResponse>, AppError> {
     require_user_id(&headers, &state)?;
-    let job = set_status(&state, id, &["paused", "interrupted"], "queued").await?;
-    match job.kind.as_str() {
-        "scrape" => crate::scraper::spawn_batch_job(state, id),
-        "analyze" => crate::duplicates::spawn_job(state, id),
-        "ingest" => crate::ingest::resume_job(state, id).await?,
-        "review_batch" => crate::review::resume_batch_job(state, id).await?,
-        _ => scanner::spawn_job(state, id),
+    let current = fetch_job(&state.pool, id).await?;
+    let resume_in_place =
+        current.status == "paused" && matches!(current.kind.as_str(), "scan" | "ingest");
+    let job = set_status(
+        &state,
+        id,
+        &["paused", "interrupted"],
+        if resume_in_place { "running" } else { "queued" },
+    )
+    .await?;
+    if !resume_in_place {
+        match job.kind.as_str() {
+            "scrape" => crate::scraper::spawn_batch_job(state, id),
+            "analyze" => crate::duplicates::spawn_job(state, id),
+            "ingest" => crate::ingest::resume_job(state, id).await?,
+            "review_batch" => crate::review::resume_batch_job(state, id).await?,
+            _ => scanner::spawn_job(state, id),
+        }
     }
     Ok(Json(job))
 }
@@ -284,7 +295,7 @@ pub async fn retry_failed(
     .await
     .map_err(AppError::internal)?;
     sqlx::query(
-        "UPDATE jobs SET status = 'queued', processed_items = success_items + skipped_items, failed_items = 0, error_message = NULL, finished_at = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE jobs SET status = 'queued', processed_items = success_items + skipped_items, failed_items = 0, phase = 'scanning', phase_processed_items = success_items + skipped_items, phase_total_items = total_items, error_message = NULL, finished_at = NULL, updated_at = ? WHERE id = ?",
     )
     .bind(now)
     .bind(id)
